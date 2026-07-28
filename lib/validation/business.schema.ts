@@ -34,6 +34,30 @@ export const businessQuerySchema = z.object({
   pageSize: z.coerce.number().int().min(1).max(500).default(25),
 });
 
+/**
+ * Filter shape for JSON request bodies (e.g. the export route).
+ *
+ * `businessQuerySchema` above coerces from URL query strings, where every value
+ * arrives as a string — so it uses `z.stringbool()` and `z.coerce.number()`. A
+ * JSON body carries real booleans and numbers, so the same fields are typed
+ * natively here. Both infer to the same `BusinessQuery` field types.
+ */
+export const businessJsonFilterSchema = z.object({
+  search: z.string().trim().max(200).optional(),
+  category: z.string().max(80).optional(),
+  country: z.string().max(80).optional(),
+  city: z.string().max(120).optional(),
+  source: z.enum(BUSINESS_SOURCES).optional(),
+  status: z.enum(BUSINESS_STATUSES).optional(),
+  minRating: z.number().min(0).max(5).optional(),
+  minReviews: z.number().int().min(0).optional(),
+  hasEmail: z.boolean().optional(),
+  hasPhone: z.boolean().optional(),
+  hasWebsite: z.boolean().optional(),
+  sortBy: sortKeySchema.optional(),
+  sortDir: z.enum(['asc', 'desc']).optional(),
+});
+
 export const businessUpdateSchema = z.object({
   status: z.enum(BUSINESS_STATUSES).optional(),
   notes: z.string().max(2000).optional(),

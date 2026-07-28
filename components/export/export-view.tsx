@@ -64,6 +64,11 @@ export function ExportView() {
   const handleExport = (): void => {
     const parsedRating = Number.parseFloat(minRating);
 
+    if (Number.isFinite(parsedRating) && (parsedRating < 0 || parsedRating > 5)) {
+      toast.error('Minimum rating must be between 0 and 5.');
+      return;
+    }
+
     createExport.mutate(
       {
         format,
