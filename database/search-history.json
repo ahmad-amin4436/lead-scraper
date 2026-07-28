@@ -1,0 +1,115 @@
+[
+  {
+    "id": "hist_ms4m6sd4843bc8f3",
+    "jobId": "job_ms4k75mode10c143",
+    "request": {
+      "categories": [
+        "restaurant",
+        "doctor",
+        "dentist",
+        "pharmacy",
+        "hospital",
+        "laboratory",
+        "veterinary",
+        "physiotherapy",
+        "optician",
+        "hair-salon",
+        "beauty-salon",
+        "nail-salon",
+        "tattoo",
+        "spa",
+        "barber",
+        "law-firm",
+        "marketing-agency",
+        "insurance",
+        "financial-advisor",
+        "printing"
+      ],
+      "country": "US",
+      "state": "Nevada",
+      "cities": [
+        "Las Vegas",
+        "Reno",
+        "Henderson"
+      ],
+      "radiusMeters": 50000,
+      "maxResults": 200,
+      "enrichContacts": true,
+      "skipDuplicates": true,
+      "provider": "openstreetmap"
+    },
+    "status": "completed",
+    "startedAt": "2026-07-28T11:15:06.432Z",
+    "finishedAt": "2026-07-28T12:10:48.472Z",
+    "elapsedMs": 3342040,
+    "found": 3418,
+    "saved": 2138,
+    "duplicates": 1280,
+    "enriched": 366,
+    "failed": 16,
+    "error": null
+  },
+  {
+    "id": "hist_ms4jrt7l9f692ab6",
+    "jobId": "job_ms4jcrcbb4d1be24",
+    "request": {
+      "categories": [
+        "restaurant",
+        "clothing",
+        "beauty-salon",
+        "hair-salon"
+      ],
+      "country": "US",
+      "state": "California",
+      "cities": [
+        "San Diego",
+        "Fresno"
+      ],
+      "radiusMeters": 50000,
+      "maxResults": 200,
+      "enrichContacts": true,
+      "skipDuplicates": true,
+      "provider": "openstreetmap"
+    },
+    "status": "completed",
+    "startedAt": "2026-07-28T10:51:28.235Z",
+    "finishedAt": "2026-07-28T11:03:10.496Z",
+    "elapsedMs": 702261,
+    "found": 1059,
+    "saved": 1047,
+    "duplicates": 12,
+    "enriched": 211,
+    "failed": 2,
+    "error": null
+  },
+  {
+    "id": "hist_ms4jbqxjebdd493f",
+    "jobId": "job_ms4ja5yx332f41f5",
+    "request": {
+      "categories": [
+        "restaurant",
+        "cafe"
+      ],
+      "country": "US",
+      "state": "California",
+      "cities": [
+        "Los Angeles"
+      ],
+      "radiusMeters": 50000,
+      "maxResults": 20,
+      "enrichContacts": true,
+      "skipDuplicates": true,
+      "provider": "openstreetmap"
+    },
+    "status": "completed",
+    "startedAt": "2026-07-28T10:49:27.226Z",
+    "finishedAt": "2026-07-28T10:50:41.046Z",
+    "elapsedMs": 73818,
+    "found": 40,
+    "saved": 40,
+    "duplicates": 0,
+    "enriched": 5,
+    "failed": 0,
+    "error": null
+  }
+]
