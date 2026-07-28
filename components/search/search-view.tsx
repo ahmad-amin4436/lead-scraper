@@ -11,7 +11,7 @@ import { SearchForm } from '@/components/search/search-form';
 import { PageHeader } from '@/components/shared/page-header';
 import { Button } from '@/components/ui/button';
 import { Alert, AlertDescription, Skeleton } from '@/components/ui/misc';
-import { useJobCommand, useSettings, useStartSearch } from '@/hooks/use-api';
+import { useActiveJobs, useJobCommand, useSettings, useStartSearch } from '@/hooks/use-api';
 import { useJobPoll } from '@/hooks/use-job-poll';
 import { isValidCategory } from '@/lib/constants/categories';
 import { isValidCountry } from '@/lib/constants/locations';
@@ -57,7 +57,25 @@ export function SearchView() {
   const startSearch = useStartSearch();
   const jobCommand = useJobCommand();
 
-  const [jobId, setJobId] = React.useState<string | null>(null);
+  // The job we explicitly started this session, and a flag set when the user
+  // dismisses the panel ("New search") so we don't re-adopt a finished run.
+  const [startedJobId, setStartedJobId] = React.useState<string | null>(null);
+  const [dismissed, setDismissed] = React.useState(false);
+
+  // Reconnect to a run already in progress (e.g. after a page reload) so its
+  // monitor panel comes back and can be stopped, rather than dropping to the
+  // form. Derived, not effect-driven, so it stays in sync without extra renders.
+  const activeJobs = useActiveJobs();
+  const adoptedJobId = React.useMemo(() => {
+    if (startedJobId || dismissed) return null;
+    return (
+      activeJobs.data?.find(
+        (j) => j.status === 'running' || j.status === 'queued' || j.status === 'stopping',
+      )?.id ?? null
+    );
+  }, [startedJobId, dismissed, activeJobs.data]);
+
+  const jobId = startedJobId ?? adoptedJobId;
   const { job, error: streamError, reset } = useJobPoll(jobId);
 
   const rerun = React.useMemo(() => parseRerun(searchParams.get('rerun')), [searchParams]);
@@ -109,7 +127,8 @@ export function SearchView() {
   const handleSubmit = (request: SearchRequest): void => {
     startSearch.mutate(request, {
       onSuccess: (snapshot) => {
-        setJobId(snapshot.id);
+        setDismissed(false);
+        setStartedJobId(snapshot.id);
         toast.success('Search started.');
       },
       onError: (error) => {
@@ -133,14 +152,15 @@ export function SearchView() {
     <>
       <PageHeader
         title="Search businesses"
-        description="Sweep categories across cities, enrich contacts, and write straight to Excel."
+        description="Sweep categories across cities, enrich contacts, and save leads to your database."
         actions={
           job && !isActive ? (
             <>
               <Button
                 variant="outline"
                 onClick={() => {
-                  setJobId(null);
+                  setStartedJobId(null);
+                  setDismissed(true);
                   reset();
                 }}
               >
@@ -171,7 +191,7 @@ export function SearchView() {
           onStop={handleStop}
           commandPending={jobCommand.isPending}
         />
-      ) : settings.isPending || !defaults ? (
+      ) : settings.isPending || !defaults || (activeJobs.isPending && !jobId) ? (
         <div className="space-y-6">
           <Skeleton className="h-64 w-full" />
           <Skeleton className="h-80 w-full" />

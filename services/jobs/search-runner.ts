@@ -339,6 +339,9 @@ async function enrichRecords(
     withSite,
     settings.concurrency,
     async (record) => {
+      // Pull the stop flag from storage so a stop requested by another process
+      // aborts in-flight crawls promptly, not just at the next task boundary.
+      await job.refreshStop();
       job.signal.throwIfAborted();
 
       const result = await enrichmentService.enrich(record.website, settings, job.signal);
