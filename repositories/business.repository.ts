@@ -9,6 +9,8 @@ import {
   type BusinessSource,
   type BusinessStats,
   type BusinessStatus,
+  type EmailStatus,
+  type WhatsAppStatus,
 } from '@/types/business';
 import { Mutex } from '@/utils/async';
 import { normalizeHost, normalizePhone } from '@/utils/normalize';
@@ -365,6 +367,10 @@ class BusinessRepository {
       withWebsite: rows.filter((r) => r.website).length,
       withSocial: rows.filter((r) => r.facebook || r.instagram || r.linkedin || r.whatsapp).length,
       enriched: rows.filter((r) => r.status === 'enriched' || r.status === 'partial').length,
+      verifiedEmails: rows.filter((r) => r.emailStatus === 'valid').length,
+      whatsappReachable: rows.filter(
+        (r) => r.whatsappStatus === 'confirmed' || r.whatsappStatus === 'likely',
+      ).length,
       averageRating,
       byCategory: topCounts(rows.map((r) => r.category), 8),
       byCountry: topCounts(rows.map((r) => r.country), 8),
