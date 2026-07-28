@@ -32,6 +32,8 @@ yarn-error.log*
 
 # env files (can opt-in for committing if needed)
 .env*
+# ...but the template carries no secrets and should be tracked.
+!.env.example
 
 # vercel
 .vercel
@@ -39,3 +41,27 @@ yarn-error.log*
 # typescript
 *.tsbuildinfo
 next-env.d.ts
+
+# ---------------------------------------------------------------------------
+# LeadMine data store
+#
+# `database/Businesses.xlsx` is the application's primary datastore and IS
+# tracked. The entries below keep secrets and volatile runtime state out of
+# version control.
+# ---------------------------------------------------------------------------
+
+# Stores the Google Places API key in plaintext — never commit this.
+/database/settings.json
+
+# Runtime state: regenerated on demand, noisy in diffs.
+/database/logs.jsonl
+/database/search-history.json
+/database/exports.json
+
+# Generated export files (the folder itself is kept via .gitkeep).
+/database/exports/*
+!/database/exports/.gitkeep
+
+# Atomic-write temp files.
+/database/*.tmp
+/database/**/*.tmp
