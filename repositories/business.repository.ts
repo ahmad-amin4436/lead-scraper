@@ -79,6 +79,16 @@ class BusinessRepository {
           const get = (header: string, fallback: number): ExcelJS.CellValue =>
             row.getCell(indexFor(header, fallback)).value;
 
+          /**
+           * Reads a column that only exists in newer sheets. Unlike `get`, this
+           * never falls back to a position — on a legacy workbook that index
+           * belongs to a different field, so guessing would corrupt the value.
+           */
+          const getOptional = (header: string): ExcelJS.CellValue => {
+            const column = headerToIndex.get(header.toLowerCase());
+            return column === undefined ? '' : row.getCell(column).value;
+          };
+
           const id = cellToString(get('ID', 1));
           const name = cellToString(get('Business Name', 2));
           if (!id && !name) return;
@@ -94,7 +104,12 @@ class BusinessRepository {
             phone: cellToString(get('Phone', 8)),
             website: cellToString(get('Website', 9)),
             email: cellToString(get('Email', 10)),
+            // Added after the original 23-column layout — header lookup only.
+            emailStatus: (cellToString(getOptional('Email Status')) ||
+              'unverified') as EmailStatus,
             whatsapp: cellToString(get('WhatsApp', 11)),
+            whatsappStatus: (cellToString(getOptional('WhatsApp Status')) ||
+              'unverified') as WhatsAppStatus,
             facebook: cellToString(get('Facebook', 12)),
             instagram: cellToString(get('Instagram', 13)),
             linkedin: cellToString(get('LinkedIn', 14)),

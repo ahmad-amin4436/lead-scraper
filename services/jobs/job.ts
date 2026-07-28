@@ -33,6 +33,8 @@ export class Job {
     duplicates: 0,
     enriched: 0,
     enrichmentFailed: 0,
+    emailsVerified: 0,
+    whatsappReachable: 0,
     skipped: 0,
     failed: 0,
   };

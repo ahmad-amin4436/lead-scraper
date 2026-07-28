@@ -19,6 +19,7 @@ import { enrichmentService } from '../enrichment/enrichment.service';
 import { logger } from '../logging/logger.service';
 import { geocodingService } from '../search/geocoding.service';
 import type { ProviderContext, SearchProvider } from '../search/provider';
+import { verificationService } from '../verification/verification.service';
 import type { Job } from './job';
 
 /** Records buffered before a workbook write. */
@@ -54,6 +55,8 @@ function toRecord(business: ProviderBusiness, location: ResolvedLocation): Busin
     source: business.source,
     dateAdded: new Date().toISOString(),
     status: business.website ? 'new' : 'no-website',
+    emailStatus: 'unverified',
+    whatsappStatus: 'unverified',
     notes: '',
   };
 }
@@ -249,6 +252,12 @@ export async function runSearchJob(
         await enrichRecords(job, records, settings, task);
       }
 
+      // Runs regardless of enrichment: a provider phone number can still be
+      // classified for WhatsApp even when no website was crawled.
+      if (records.length > 0) {
+        await verifyRecords(job, records, settings, task);
+      }
+
       for (const record of records) {
         pending.push(record);
         job.addResult({ ...record, duplicate: false } satisfies LiveResult);
@@ -387,6 +396,51 @@ async function enrichRecords(
         'enrichment.failed',
         `Enrichment error for ${record.name}: ${toErrorMessage(error)}`,
         { jobId: job.id, context: { website: record.website } },
+      );
+    },
+  );
+}
+
+/**
+ * Verifies email deliverability and WhatsApp reachability for a batch.
+ *
+ * DNS results are cached per domain inside the verifier, so this is cheap even
+ * across large runs. Failures are swallowed per record — a verification problem
+ * must never cost us the lead itself.
+ */
+async function verifyRecords(
+  job: Job,
+  records: BusinessRecord[],
+  settings: AppSettings,
+  task: Task,
+): Promise<void> {
+  job.setTask(`Verifying contacts for ${task.categoryLabel} in ${task.city}`, 0.9);
+
+  await mapWithConcurrency(
+    records,
+    settings.concurrency,
+    async (record) => {
+      await job.waitWhilePaused();
+      job.signal.throwIfAborted();
+
+      const outcome = await verificationService.applyTo(record);
+
+      if (outcome.notes.length > 0) {
+        record.notes = [record.notes, ...outcome.notes].filter(Boolean).join(' | ').slice(0, 1000);
+      }
+
+      if (outcome.emailStatus === 'valid') job.addCount('emailsVerified');
+      if (outcome.whatsappStatus === 'confirmed' || outcome.whatsappStatus === 'likely') {
+        job.addCount('whatsappReachable');
+      }
+    },
+    (error, record) => {
+      if (job.signal.aborted) return;
+      // Leave the status as 'unverified' rather than guessing.
+      void logger.debug(
+        'enrichment.skipped',
+        `Verification skipped for ${record.name}: ${toErrorMessage(error)}`,
+        { jobId: job.id },
       );
     },
   );

@@ -18,6 +18,39 @@ export const BUSINESS_STATUSES = [
 ] as const;
 export type BusinessStatus = (typeof BUSINESS_STATUSES)[number];
 
+/**
+ * Deliverability signal for the stored email address.
+ *
+ * This reflects whether the *domain* can receive mail (MX records), not whether
+ * the individual mailbox exists — proving that requires SMTP `RCPT TO` probing,
+ * which most providers block, catch-all domains defeat, and which gets the
+ * sending IP blacklisted. Treat `valid` as "safe to attempt", not "guaranteed".
+ */
+export const EMAIL_STATUSES = [
+  'unverified',
+  'valid',
+  'risky',
+  'invalid',
+  'unknown',
+] as const;
+export type EmailStatus = (typeof EMAIL_STATUSES)[number];
+
+/**
+ * Likelihood that the stored phone number is reachable on WhatsApp.
+ *
+ * `confirmed` means the business published a WhatsApp link on its own website.
+ * Everything else is inferred from the number's line type, because WhatsApp
+ * exposes no way to check registration for a number you do not own.
+ */
+export const WHATSAPP_STATUSES = [
+  'unverified',
+  'confirmed',
+  'likely',
+  'unlikely',
+  'none',
+] as const;
+export type WhatsAppStatus = (typeof WHATSAPP_STATUSES)[number];
+
 export interface BusinessContact {
   email: string | null;
   /** Additional addresses beyond the primary `email`, deduplicated. */
@@ -56,6 +89,8 @@ export interface BusinessRecord {
   source: BusinessSource;
   dateAdded: string;
   status: BusinessStatus;
+  emailStatus: EmailStatus;
+  whatsappStatus: WhatsAppStatus;
   notes: string;
 }
 
@@ -71,7 +106,9 @@ export const BUSINESS_COLUMNS = [
   { header: 'Phone', key: 'phone', width: 20 },
   { header: 'Website', key: 'website', width: 32 },
   { header: 'Email', key: 'email', width: 30 },
+  { header: 'Email Status', key: 'emailStatus', width: 14 },
   { header: 'WhatsApp', key: 'whatsapp', width: 26 },
+  { header: 'WhatsApp Status', key: 'whatsappStatus', width: 16 },
   { header: 'Facebook', key: 'facebook', width: 30 },
   { header: 'Instagram', key: 'instagram', width: 30 },
   { header: 'LinkedIn', key: 'linkedin', width: 30 },
@@ -99,6 +136,8 @@ export interface BusinessQuery {
   city?: string;
   source?: BusinessSource;
   status?: BusinessStatus;
+  emailStatus?: EmailStatus;
+  whatsappStatus?: WhatsAppStatus;
   minRating?: number;
   minReviews?: number;
   hasEmail?: boolean;
@@ -125,6 +164,10 @@ export interface BusinessStats {
   withWebsite: number;
   withSocial: number;
   enriched: number;
+  /** Emails whose domain accepts mail. */
+  verifiedEmails: number;
+  /** Numbers confirmed or likely to be reachable on WhatsApp. */
+  whatsappReachable: number;
   averageRating: number | null;
   byCategory: { label: string; count: number }[];
   byCountry: { label: string; count: number }[];

@@ -22,6 +22,10 @@ export interface JobCounters {
   duplicates: number;
   enriched: number;
   enrichmentFailed: number;
+  /** Emails whose domain was confirmed to accept mail. */
+  emailsVerified: number;
+  /** Numbers confirmed or likely to be reachable on WhatsApp. */
+  whatsappReachable: number;
   skipped: number;
   failed: number;
 }
