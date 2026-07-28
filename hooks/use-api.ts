@@ -106,7 +106,7 @@ export function useStartSearch(): UseMutationResult<JobSnapshot, Error, SearchRe
 export function useJobCommand(): UseMutationResult<
   JobSnapshot,
   Error,
-  { jobId: string; command: 'pause' | 'resume' | 'stop' }
+  { jobId: string; command: 'stop' }
 > {
   return useMutation({
     mutationFn: ({ jobId, command }) =>

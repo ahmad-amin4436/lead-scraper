@@ -1,56 +1,104 @@
 import 'server-only';
 
-import type { JobCounters, JobEvent, JobProgress, JobSnapshot, JobStatus } from '@/types/job';
+import { jobKey } from '@/lib/paths';
+import { blobStore } from '@/lib/storage/blob-store';
+import type { JobCounters, JobProgress, JobRecord, JobSnapshot, JobStatus } from '@/types/job';
 import type { LiveResult, SearchRequest } from '@/types/search';
 
-/** Live results retained per job; older ones are dropped to bound memory. */
+/** Live results retained per job; older ones are dropped to bound blob size. */
 const MAX_RETAINED_RESULTS = 300;
 
-type Listener = (event: JobEvent) => void;
-
 /**
- * A single search run: its state machine, counters, and event fan-out.
+ * A single search run, persisted as a JSON blob at `jobs/<id>`.
  *
- * Pause is implemented as a gate that `waitWhilePaused` awaits, so the runner
- * suspends at checkpoints rather than being interrupted mid-request. Stop aborts
- * the shared `AbortSignal`, which unwinds in-flight HTTP calls.
+ * Progress mutations update an in-memory {@link JobRecord} and are written back
+ * to storage by `save()`, which the runner calls at checkpoints. A polling
+ * request reads the blob (via {@link jobManager}) to render live progress —
+ * there are no in-process listeners, since the reader and the worker run in
+ * different serverless instances.
+ *
+ * Stop is cooperative: another process sets `stopRequested` in the blob; the
+ * worker observes it at the next checkpoint (`refreshStop`) and aborts its own
+ * local {@link AbortController}, which unwinds in-flight HTTP.
  */
 export class Job {
-  readonly id: string;
-  readonly request: SearchRequest;
-  readonly startedAt: string;
-
-  status: JobStatus = 'queued';
-  error: string | null = null;
-  finishedAt: string | null = null;
-  currentTask = 'Preparing';
-
-  readonly counters: JobCounters = {
-    totalTasks: 0,
-    completedTasks: 0,
-    found: 0,
-    saved: 0,
-    duplicates: 0,
-    enriched: 0,
-    enrichmentFailed: 0,
-    emailsVerified: 0,
-    whatsappReachable: 0,
-    skipped: 0,
-    failed: 0,
-  };
-
-  private readonly controller = new AbortController();
-  private readonly listeners = new Set<Listener>();
+  private record: JobRecord;
   private results: LiveResult[] = [];
-  private startedAtMs = Date.now();
-  private pauseGate: { promise: Promise<void>; release: () => void } | null = null;
-  /** Fractional progress inside the current task, 0-1. */
   private taskFraction = 0;
+  private readonly controller = new AbortController();
 
-  constructor(id: string, request: SearchRequest) {
-    this.id = id;
-    this.request = request;
-    this.startedAt = new Date().toISOString();
+  private constructor(record: JobRecord, results: LiveResult[]) {
+    this.record = record;
+    this.results = results;
+  }
+
+  /** Creates a fresh job and persists its initial state. */
+  static async create(id: string, request: SearchRequest): Promise<Job> {
+    const now = new Date();
+    const record: JobRecord = {
+      id,
+      status: 'queued',
+      request,
+      counters: {
+        totalTasks: 0,
+        completedTasks: 0,
+        found: 0,
+        saved: 0,
+        duplicates: 0,
+        enriched: 0,
+        enrichmentFailed: 0,
+        emailsVerified: 0,
+        whatsappReachable: 0,
+        skipped: 0,
+        failed: 0,
+      },
+      progress: { percent: 0, elapsedMs: 0, etaMs: null, currentTask: 'Preparing' },
+      startedAt: now.toISOString(),
+      startedAtMs: now.getTime(),
+      finishedAt: null,
+      error: null,
+      results: [],
+      stopRequested: false,
+    };
+
+    const job = new Job(record, []);
+    await job.save();
+    return job;
+  }
+
+  /** Loads an existing job from storage, or null when it doesn't exist. */
+  static async load(id: string): Promise<Job | null> {
+    const record = await blobStore.getJSON<JobRecord>(jobKey(id));
+    if (!record) return null;
+    return new Job(record, record.results ?? []);
+  }
+
+  get id(): string {
+    return this.record.id;
+  }
+
+  get status(): JobStatus {
+    return this.record.status;
+  }
+
+  get request(): SearchRequest {
+    return this.record.request;
+  }
+
+  get counters(): JobCounters {
+    return this.record.counters;
+  }
+
+  get startedAt(): string {
+    return this.record.startedAt;
+  }
+
+  get finishedAt(): string | null {
+    return this.record.finishedAt;
+  }
+
+  get error(): string | null {
+    return this.record.error;
   }
 
   get signal(): AbortSignal {
@@ -58,88 +106,79 @@ export class Job {
   }
 
   get isTerminal(): boolean {
-    return this.status === 'completed' || this.status === 'failed' || this.status === 'stopped';
+    const s = this.record.status;
+    return s === 'completed' || s === 'failed' || s === 'stopped';
+  }
+
+  get elapsedMs(): number {
+    const end = this.record.finishedAt ? Date.parse(this.record.finishedAt) : Date.now();
+    return end - this.record.startedAtMs;
+  }
+
+  // --- persistence ---------------------------------------------------------
+
+  /** Recomputes derived progress and writes the full record to storage. */
+  async save(): Promise<void> {
+    this.record.progress = this.computeProgress();
+    this.record.results = [...this.results].reverse().slice(0, MAX_RETAINED_RESULTS);
+    await blobStore.setJSON(jobKey(this.record.id), this.record);
+  }
+
+  /**
+   * Re-reads the stop flag from storage and, if another process requested a
+   * stop, moves to `stopping` and aborts the local controller. Returns true when
+   * a stop is in effect. Called by the runner at each checkpoint.
+   */
+  async refreshStop(): Promise<boolean> {
+    if (this.controller.signal.aborted) return true;
+
+    const stored = await blobStore.getJSON<JobRecord>(jobKey(this.record.id));
+    if (stored?.stopRequested) {
+      this.record.stopRequested = true;
+      if (this.record.status === 'running') this.record.status = 'stopping';
+      this.controller.abort();
+      return true;
+    }
+    return false;
   }
 
   // --- lifecycle -----------------------------------------------------------
 
-  markRunning(totalTasks: number): void {
-    this.status = 'running';
-    this.startedAtMs = Date.now();
-    this.counters.totalTasks = totalTasks;
-    this.emitStatus();
+  async markRunning(totalTasks: number): Promise<void> {
+    this.record.status = 'running';
+    this.record.startedAtMs = Date.now();
+    this.record.counters.totalTasks = totalTasks;
+    await this.save();
   }
 
-  pause(): boolean {
-    if (this.status !== 'running') return false;
-    this.status = 'paused';
-
-    let release!: () => void;
-    const promise = new Promise<void>((resolve) => {
-      release = resolve;
-    });
-    this.pauseGate = { promise, release };
-
-    this.emitStatus();
-    return true;
-  }
-
-  resume(): boolean {
-    if (this.status !== 'paused') return false;
-    this.status = 'running';
-    this.pauseGate?.release();
-    this.pauseGate = null;
-    this.emitStatus();
-    return true;
-  }
-
-  stop(): boolean {
-    if (this.isTerminal) return false;
-    this.status = 'stopping';
-    // Release the gate so a paused runner wakes up and observes the abort.
-    this.pauseGate?.release();
-    this.pauseGate = null;
-    this.controller.abort();
-    this.emitStatus();
-    return true;
-  }
-
-  finish(status: Extract<JobStatus, 'completed' | 'failed' | 'stopped'>, error?: string): void {
-    this.status = status;
-    this.error = error ?? null;
-    this.finishedAt = new Date().toISOString();
-    this.currentTask = status === 'completed' ? 'Finished' : status === 'stopped' ? 'Stopped' : 'Failed';
+  async finish(
+    status: Extract<JobStatus, 'completed' | 'failed' | 'stopped'>,
+    error?: string,
+  ): Promise<void> {
+    this.record.status = status;
+    this.record.error = error ?? null;
+    this.record.finishedAt = new Date().toISOString();
+    this.record.progress = this.computeProgress();
+    this.record.progress.currentTask =
+      status === 'completed' ? 'Finished' : status === 'stopped' ? 'Stopped' : 'Failed';
     this.taskFraction = 0;
-    this.pauseGate?.release();
-    this.pauseGate = null;
-
-    this.emit({ type: 'status', jobId: this.id, status, error: this.error });
-    this.emit({ type: 'done', jobId: this.id, status });
-  }
-
-  /** Suspends the runner while paused. Resolves immediately when running. */
-  async waitWhilePaused(): Promise<void> {
-    while (this.pauseGate && this.status === 'paused') {
-      await this.pauseGate.promise;
-    }
+    await this.save();
   }
 
   // --- progress ------------------------------------------------------------
 
   setTask(label: string, fraction = 0): void {
-    this.currentTask = label;
+    this.record.progress.currentTask = label;
     this.taskFraction = Math.max(0, Math.min(1, fraction));
-    this.emitProgress();
   }
 
   completeTask(): void {
-    this.counters.completedTasks += 1;
+    this.record.counters.completedTasks += 1;
     this.taskFraction = 0;
-    this.emitProgress();
   }
 
   addCount(key: keyof JobCounters, amount = 1): void {
-    this.counters[key] += amount;
+    this.record.counters[key] += amount;
   }
 
   addResult(result: LiveResult): void {
@@ -147,81 +186,44 @@ export class Job {
     if (this.results.length > MAX_RETAINED_RESULTS) {
       this.results.splice(0, this.results.length - MAX_RETAINED_RESULTS);
     }
-    this.emit({ type: 'result', jobId: this.id, result });
   }
 
-  get progress(): JobProgress {
-    const { totalTasks, completedTasks } = this.counters;
-    const elapsedMs = (this.finishedAt ? Date.parse(this.finishedAt) : Date.now()) - this.startedAtMs;
+  private computeProgress(): JobProgress {
+    const { totalTasks, completedTasks } = this.record.counters;
+    const end = this.record.finishedAt ? Date.parse(this.record.finishedAt) : Date.now();
+    const elapsedMs = end - this.record.startedAtMs;
 
     const done = completedTasks + this.taskFraction;
     const percent = totalTasks > 0 ? Math.min(100, (done / totalTasks) * 100) : 0;
 
-    // Extrapolate from completed tasks only; a partial task is too noisy to trust.
     const etaMs =
-      completedTasks > 0 && completedTasks < totalTasks && this.status === 'running'
+      completedTasks > 0 && completedTasks < totalTasks && this.record.status === 'running'
         ? Math.round((elapsedMs / completedTasks) * (totalTasks - completedTasks))
         : null;
 
     return {
-      percent: this.isTerminal && this.status === 'completed' ? 100 : Number(percent.toFixed(1)),
+      percent:
+        this.isTerminal && this.record.status === 'completed'
+          ? 100
+          : Number(percent.toFixed(1)),
       elapsedMs,
       etaMs,
-      currentTask: this.currentTask,
+      currentTask: this.record.progress.currentTask,
     };
   }
 
   get snapshot(): JobSnapshot {
+    const progress = this.computeProgress();
     return {
-      id: this.id,
-      status: this.status,
-      request: this.request,
-      counters: { ...this.counters },
-      progress: this.progress,
-      startedAt: this.startedAt,
-      finishedAt: this.finishedAt,
-      error: this.error,
-      results: [...this.results].reverse(),
+      id: this.record.id,
+      status: this.record.status,
+      request: this.record.request,
+      counters: { ...this.record.counters },
+      progress,
+      startedAt: this.record.startedAt,
+      finishedAt: this.record.finishedAt,
+      error: this.record.error,
+      results: [...this.results].reverse().slice(0, MAX_RETAINED_RESULTS),
     };
-  }
-
-  get elapsedMs(): number {
-    return (this.finishedAt ? Date.parse(this.finishedAt) : Date.now()) - this.startedAtMs;
-  }
-
-  // --- events --------------------------------------------------------------
-
-  subscribe(listener: Listener): () => void {
-    this.listeners.add(listener);
-    listener({ type: 'snapshot', job: this.snapshot });
-    return () => {
-      this.listeners.delete(listener);
-    };
-  }
-
-  private emit(event: JobEvent): void {
-    for (const listener of this.listeners) {
-      try {
-        listener(event);
-      } catch (error) {
-        // A broken SSE consumer must not derail the job.
-        console.error('[job] listener error:', error);
-      }
-    }
-  }
-
-  emitProgress(): void {
-    this.emit({
-      type: 'progress',
-      jobId: this.id,
-      counters: { ...this.counters },
-      progress: this.progress,
-      status: this.status,
-    });
-  }
-
-  private emitStatus(): void {
-    this.emit({ type: 'status', jobId: this.id, status: this.status, error: this.error });
-    this.emitProgress();
   }
 }

@@ -1,15 +1,10 @@
 # Netlify configuration for LeadMine AI.
 #
-# IMPORTANT: Netlify Functions are serverless — the filesystem is ephemeral and
-# each request may hit a different instance. That breaks three things this app
-# relies on:
+# The app is serverless-ready: all data (leads, settings, history, exports, logs,
+# and job state) persists to Netlify Blobs, and long searches run in a Background
+# Function (up to 15 minutes) with the browser polling for live progress. No
+# persistent volume or long-lived process is required.
 #
-#   1. Excel persistence  — the data directory falls back to the OS temp dir and
-#                           does not survive between invocations.
-#   2. SSE live progress  — the job lives in one process's memory.
-#   3. Long searches      — function timeouts (10-26s) kill a run mid-flight.
-#
-# Deploy to a container or VPS with a mounted volume for the full feature set.
 # See the Deployment section of README.md.
 
 [build]
@@ -18,8 +13,6 @@
 
 [build.environment]
   NODE_VERSION = "20.9.0"
-  # Keep the data directory on the only writable path in a Lambda sandbox.
-  LEADMINE_DATA_DIR = "/tmp/leadmine-data"
 
 [[plugins]]
   package = "@netlify/plugin-nextjs"
@@ -30,10 +23,3 @@
     X-Content-Type-Options = "nosniff"
     X-Frame-Options = "DENY"
     Referrer-Policy = "strict-origin-when-cross-origin"
-
-# SSE must not be buffered or cached by the CDN.
-[[headers]]
-  for = "/api/search/*/stream"
-  [headers.values]
-    Cache-Control = "no-cache, no-transform"
-    X-Accel-Buffering = "no"

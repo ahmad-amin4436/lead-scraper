@@ -31,5 +31,5 @@ export const searchRequestSchema = z.object({
 export type SearchRequestInput = z.infer<typeof searchRequestSchema>;
 
 export const jobCommandSchema = z.object({
-  command: z.enum(['pause', 'resume', 'stop']),
+  command: z.enum(['stop']),
 });

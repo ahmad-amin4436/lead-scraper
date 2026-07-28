@@ -3,7 +3,6 @@ import type { LiveResult, SearchRequest } from './search';
 export const JOB_STATUSES = [
   'queued',
   'running',
-  'paused',
   'stopping',
   'completed',
   'failed',
@@ -11,7 +10,12 @@ export const JOB_STATUSES = [
 ] as const;
 export type JobStatus = (typeof JOB_STATUSES)[number];
 
-export type JobCommand = 'pause' | 'resume' | 'stop';
+/**
+ * Only `stop` remains. Pause/resume relied on an in-memory promise gate that
+ * cannot survive across serverless invocations, so they were removed when the
+ * job model moved to a shared blob store.
+ */
+export type JobCommand = 'stop';
 
 export interface JobCounters {
   /** Total (category x city) pairs to sweep. */
@@ -49,13 +53,17 @@ export interface JobSnapshot {
   startedAt: string;
   finishedAt: string | null;
   error: string | null;
-  /** Most recent results, newest first, capped by the job manager. */
+  /** Most recent results, newest first, capped by the runner. */
   results: LiveResult[];
 }
 
-export type JobEvent =
-  | { type: 'snapshot'; job: JobSnapshot }
-  | { type: 'result'; jobId: string; result: LiveResult }
-  | { type: 'progress'; jobId: string; counters: JobCounters; progress: JobProgress; status: JobStatus }
-  | { type: 'status'; jobId: string; status: JobStatus; error: string | null }
-  | { type: 'done'; jobId: string; status: JobStatus };
+/**
+ * The full persisted state of a job in blob storage. It is the snapshot plus a
+ * cooperative stop flag the running worker polls at each checkpoint — replacing
+ * the in-memory `AbortController` that could not span serverless invocations.
+ */
+export interface JobRecord extends JobSnapshot {
+  stopRequested: boolean;
+  /** Wall-clock ms the run started, for elapsed/ETA math across processes. */
+  startedAtMs: number;
+}

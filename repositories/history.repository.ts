@@ -1,13 +1,13 @@
 import 'server-only';
 
-import { PATHS } from '@/lib/paths';
+import { KEYS } from '@/lib/paths';
 import type { SearchHistoryEntry } from '@/types/search';
 import { JsonStore } from './json-store';
 
 const MAX_ENTRIES = 500;
 
 const store = new JsonStore<SearchHistoryEntry[]>(
-  PATHS.history,
+  KEYS.history,
   () => [],
   (raw) => (Array.isArray(raw) ? (raw as SearchHistoryEntry[]) : []),
 );

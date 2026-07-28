@@ -91,7 +91,7 @@ export async function runSearchJob(
     })),
   );
 
-  job.markRunning(tasks.length);
+  await job.markRunning(tasks.length);
 
   await logger.info('search.started', `Search started with ${provider.label}`, {
     jobId: job.id,
@@ -114,7 +114,7 @@ export async function runSearchJob(
       const { inserted } = await businessRepository.insertMany(batch, false);
       await businessRepository.flush();
       job.addCount('saved', inserted.length);
-      await logger.debug('database.written', `Saved ${inserted.length} record(s) to Excel`, {
+      await logger.debug('database.written', `Saved ${inserted.length} record(s)`, {
         jobId: job.id,
         context: { count: inserted.length },
       });
@@ -126,7 +126,7 @@ export async function runSearchJob(
       });
     }
 
-    job.emitProgress();
+    await job.save();
   };
 
   try {
@@ -134,9 +134,10 @@ export async function runSearchJob(
     const locations = new Map<string, ResolvedLocation>();
 
     for (const city of request.cities) {
-      await job.waitWhilePaused();
+      await job.refreshStop();
       job.signal.throwIfAborted();
       job.setTask(`Locating ${city}`);
+      await job.save();
 
       try {
         const resolved = await geocodingService.resolve(
@@ -169,17 +170,19 @@ export async function runSearchJob(
     }
 
     for (const task of tasks) {
-      await job.waitWhilePaused();
+      await job.refreshStop();
       if (job.signal.aborted) break;
 
       const location = locations.get(task.city);
       if (!location) {
         job.addCount('skipped');
         job.completeTask();
+        await job.save();
         continue;
       }
 
       job.setTask(`Searching ${task.categoryLabel} in ${task.city}`, 0.1);
+      await job.save();
 
       let businesses: ProviderBusiness[] = [];
 
@@ -266,6 +269,7 @@ export async function runSearchJob(
       if (pending.length >= SAVE_BATCH_SIZE) await flushPending();
 
       job.completeTask();
+      await job.save();
 
       if (settings.delayMs > 0 && !job.signal.aborted) {
         await sleep(settings.delayMs, job.signal).catch(() => undefined);
@@ -275,14 +279,14 @@ export async function runSearchJob(
     await flushPending();
 
     if (job.signal.aborted) {
-      job.finish('stopped');
+      await job.finish('stopped');
       await logger.warn('search.stopped', 'Search stopped by user', {
         jobId: job.id,
         elapsedMs: job.elapsedMs,
         context: { saved: job.counters.saved },
       });
     } else {
-      job.finish('completed');
+      await job.finish('completed');
       await logger.info('search.completed', 'Search completed', {
         jobId: job.id,
         elapsedMs: job.elapsedMs,
@@ -301,13 +305,13 @@ export async function runSearchJob(
     const message = toErrorMessage(error);
 
     if (aborted) {
-      job.finish('stopped');
+      await job.finish('stopped');
       await logger.warn('search.stopped', 'Search stopped by user', {
         jobId: job.id,
         elapsedMs: job.elapsedMs,
       });
     } else {
-      job.finish('failed', message);
+      await job.finish('failed', message);
       await logger.error('search.failed', `Search failed: ${message}`, {
         jobId: job.id,
         elapsedMs: job.elapsedMs,
@@ -335,7 +339,6 @@ async function enrichRecords(
     withSite,
     settings.concurrency,
     async (record) => {
-      await job.waitWhilePaused();
       job.signal.throwIfAborted();
 
       const result = await enrichmentService.enrich(record.website, settings, job.signal);
@@ -420,7 +423,6 @@ async function verifyRecords(
     records,
     settings.concurrency,
     async (record) => {
-      await job.waitWhilePaused();
       job.signal.throwIfAborted();
 
       const outcome = await verificationService.applyTo(record);

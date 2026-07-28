@@ -12,7 +12,7 @@ import { PageHeader } from '@/components/shared/page-header';
 import { Button } from '@/components/ui/button';
 import { Alert, AlertDescription, Skeleton } from '@/components/ui/misc';
 import { useJobCommand, useSettings, useStartSearch } from '@/hooks/use-api';
-import { useJobStream } from '@/hooks/use-job-stream';
+import { useJobPoll } from '@/hooks/use-job-poll';
 import { isValidCategory } from '@/lib/constants/categories';
 import { isValidCountry } from '@/lib/constants/locations';
 import type { SearchRequestInput } from '@/lib/validation/search.schema';
@@ -58,7 +58,7 @@ export function SearchView() {
   const jobCommand = useJobCommand();
 
   const [jobId, setJobId] = React.useState<string | null>(null);
-  const { job, connected, error: streamError, reset } = useJobStream(jobId);
+  const { job, error: streamError, reset } = useJobPoll(jobId);
 
   const rerun = React.useMemo(() => parseRerun(searchParams.get('rerun')), [searchParams]);
 
@@ -82,7 +82,8 @@ export function SearchView() {
   }, [settings.data, rerun]);
 
   const isActive =
-    job !== null && (job.status === 'running' || job.status === 'paused' || job.status === 'stopping');
+    job !== null &&
+    (job.status === 'running' || job.status === 'queued' || job.status === 'stopping');
 
   // Refresh the database views once a run finishes so counts stay accurate.
   const previousStatus = React.useRef<string | null>(null);
@@ -117,11 +118,11 @@ export function SearchView() {
     });
   };
 
-  const handleCommand = (command: 'pause' | 'resume' | 'stop'): void => {
+  const handleStop = (): void => {
     if (!jobId) return;
 
     jobCommand.mutate(
-      { jobId, command },
+      { jobId, command: 'stop' },
       {
         onError: (error) => toast.error(error.message),
       },
@@ -166,9 +167,8 @@ export function SearchView() {
       {job ? (
         <JobMonitor
           job={job}
-          connected={connected}
           streamError={streamError}
-          onCommand={handleCommand}
+          onStop={handleStop}
           commandPending={jobCommand.isPending}
         />
       ) : settings.isPending || !defaults ? (

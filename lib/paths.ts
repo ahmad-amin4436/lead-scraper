@@ -1,70 +1,36 @@
 import 'server-only';
 
-import fs from 'node:fs/promises';
-import os from 'node:os';
-import path from 'node:path';
-
 /**
- * Resolves the writable data directory.
+ * Storage keys for every persisted artifact.
  *
- * Serverless platforms (Netlify, Vercel) ship a read-only bundle, so the
- * project-local `./database` folder cannot be written to there. `LEADMINE_DATA_DIR`
- * overrides the location; otherwise we fall back to the OS temp directory when a
- * serverless environment is detected. Temp storage is ephemeral — the README
- * explains why a persistent volume is required for real deployments.
+ * These were once filesystem paths; they are now keys into {@link blobStore},
+ * which is backed by Netlify Blobs in production and the local filesystem in
+ * development. Keeping them centralised means the whole app addresses storage
+ * through one vocabulary regardless of the backend.
+ *
+ * Keys must not start with `/` and must not contain `:` (Netlify Blobs rules).
  */
-function resolveDataDir(): string {
-  const configured = process.env.LEADMINE_DATA_DIR?.trim();
-  if (configured) {
-    return path.isAbsolute(configured)
-      ? configured
-      : path.join(/* turbopackIgnore: true */ process.cwd(), configured);
-  }
-
-  const isServerless = Boolean(
-    process.env.NETLIFY || process.env.VERCEL || process.env.AWS_LAMBDA_FUNCTION_NAME,
-  );
-
-  // The turbopackIgnore hints stop the bundler treating these runtime data
-  // paths as module resolution, which otherwise traces the whole project
-  // into the deployment bundle.
-  return isServerless
-    ? path.join(/* turbopackIgnore: true */ os.tmpdir(), 'leadmine-data')
-    : path.join(/* turbopackIgnore: true */ process.cwd(), 'database');
-}
-
-export const DATA_DIR = resolveDataDir();
-export const EXPORTS_DIR = path.join(DATA_DIR, 'exports');
-
-export const PATHS = {
-  dataDir: DATA_DIR,
-  exportsDir: EXPORTS_DIR,
-  businesses: path.join(DATA_DIR, 'Businesses.xlsx'),
-  settings: path.join(DATA_DIR, 'settings.json'),
-  history: path.join(DATA_DIR, 'search-history.json'),
-  exports: path.join(DATA_DIR, 'exports.json'),
-  logs: path.join(DATA_DIR, 'logs.jsonl'),
+export const KEYS = {
+  businesses: 'businesses.json',
+  settings: 'settings.json',
+  history: 'search-history.json',
+  exports: 'exports.json',
+  logs: 'logs.jsonl',
+  /** Prefix under which generated export files live. */
+  exportsPrefix: 'exports/',
+  /** Prefix under which per-job state blobs live. */
+  jobsPrefix: 'jobs/',
 } as const;
 
-let ensured: Promise<void> | null = null;
-
-/** Creates the data directories once per process. Safe to call on every request. */
-export function ensureDataDir(): Promise<void> {
-  ensured ??= (async () => {
-    await fs.mkdir(DATA_DIR, { recursive: true });
-    await fs.mkdir(EXPORTS_DIR, { recursive: true });
-  })().catch((error: unknown) => {
-    // Reset so a transient failure (e.g. a race on first boot) can be retried.
-    ensured = null;
-    throw error;
-  });
-
-  return ensured;
+/** Key for a generated export file, namespaced under the exports prefix. */
+export function exportFileKey(fileName: string): string {
+  // Guard against a key escaping the prefix via path separators.
+  const safe = fileName.replace(/[/\\]/g, '_');
+  return `${KEYS.exportsPrefix}${safe}`;
 }
 
-/** True when the path stays inside the exports directory (path traversal guard). */
-export function isInsideExports(candidate: string): boolean {
-  const resolved = path.resolve(candidate);
-  const root = path.resolve(EXPORTS_DIR);
-  return resolved === root || resolved.startsWith(root + path.sep);
+/** Key for a single job's state blob. */
+export function jobKey(jobId: string): string {
+  const safe = jobId.replace(/[/\\:]/g, '_');
+  return `${KEYS.jobsPrefix}${safe}`;
 }

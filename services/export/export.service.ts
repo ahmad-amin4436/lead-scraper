@@ -1,24 +1,20 @@
 import 'server-only';
 
-import fs from 'node:fs/promises';
-import path from 'node:path';
-
 import { AppError, toErrorMessage } from '@/lib/errors';
-import { EXPORTS_DIR, ensureDataDir } from '@/lib/paths';
+import { exportFileKey } from '@/lib/paths';
+import { blobStore } from '@/lib/storage/blob-store';
 import { businessRepository } from '@/repositories/business.repository';
 import { exportRepository } from '@/repositories/export.repository';
+import { ExcelJS, styleSheet } from '@/repositories/excel/workbook';
 import type { BusinessRecord } from '@/types/business';
 import type { ExportRecord, ExportRequest } from '@/types/export';
 import { UTF8_BOM, toCsv } from '@/utils/csv';
 import { createId } from '@/utils/id';
-import { ExcelJS, saveWorkbookAtomic, styleSheet } from '@/repositories/excel/workbook';
 import { logger } from '../logging/logger.service';
 import { getTemplateColumns } from './templates';
 
 export interface ExportResult {
   record: ExportRecord;
-  /** Absolute path of the written file. */
-  filePath: string;
 }
 
 const MIME_TYPES = {
@@ -47,21 +43,19 @@ class ExportService {
       throw new AppError('Nothing to export — no records match the current filters.', 'empty_export', 400);
     }
 
-    await ensureDataDir();
-
     const columns = getTemplateColumns(request.template);
     const stamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
     const fileName = `leadmine-${request.template}-${stamp}-${createId()}.${request.format}`;
-    const filePath = path.join(EXPORTS_DIR, fileName);
 
     try {
-      if (request.format === 'xlsx') {
-        await this.writeXlsx(filePath, rows, columns);
-      } else {
-        await this.writeCsv(filePath, rows, columns);
-      }
+      const buffer =
+        request.format === 'xlsx'
+          ? await this.buildXlsx(rows, columns)
+          : this.buildCsv(rows, columns);
 
-      const stats = await fs.stat(filePath);
+      // Store the generated file in blob storage so it survives across instances
+      // and can be downloaded later.
+      await blobStore.setBuffer(exportFileKey(fileName), buffer);
 
       const record: ExportRecord = {
         id: createId('exp'),
@@ -69,7 +63,7 @@ class ExportService {
         format: request.format,
         template: request.template,
         rowCount: rows.length,
-        byteSize: stats.size,
+        byteSize: buffer.byteLength,
         createdAt: new Date().toISOString(),
         filters: request.filters,
       };
@@ -80,10 +74,10 @@ class ExportService {
         context: { format: request.format, template: request.template, rows: rows.length },
       });
 
-      return { record, filePath };
+      return { record };
     } catch (error) {
       // Don't leave a partial file behind for a failed export.
-      await fs.rm(filePath, { force: true }).catch(() => undefined);
+      await blobStore.delete(exportFileKey(fileName)).catch(() => undefined);
       await logger.error('export.failed', `Export failed: ${toErrorMessage(error)}`, {
         context: { format: request.format, template: request.template },
       });
@@ -91,11 +85,10 @@ class ExportService {
     }
   }
 
-  private async writeXlsx(
-    filePath: string,
+  private async buildXlsx(
     rows: readonly BusinessRecord[],
     columns: ReturnType<typeof getTemplateColumns>,
-  ): Promise<void> {
+  ): Promise<Buffer> {
     const workbook = new ExcelJS.Workbook();
     workbook.creator = 'LeadMine AI';
     workbook.created = new Date();
@@ -118,21 +111,18 @@ class ExportService {
       sheet.addRow(row);
     }
 
-    await saveWorkbookAtomic(workbook, filePath);
+    const arrayBuffer = await workbook.xlsx.writeBuffer();
+    return Buffer.from(arrayBuffer as ArrayBuffer);
   }
 
-  private async writeCsv(
-    filePath: string,
+  private buildCsv(
     rows: readonly BusinessRecord[],
     columns: ReturnType<typeof getTemplateColumns>,
-  ): Promise<void> {
+  ): Buffer {
     const headers = columns.map((column) => column.header);
     const body = rows.map((record) => columns.map((column) => column.value(record)));
     const csv = UTF8_BOM + toCsv(headers, body);
-
-    const temp = `${filePath}.tmp`;
-    await fs.writeFile(temp, csv, 'utf8');
-    await fs.rename(temp, filePath);
+    return Buffer.from(csv, 'utf8');
   }
 
   /** Reads a previously generated export back for download. */
@@ -140,15 +130,9 @@ class ExportService {
     const record = await exportRepository.getById(id);
     if (!record) return null;
 
-    const filePath = exportRepository.resolvePath(record.fileName);
-    if (!filePath) return null;
-
-    try {
-      const buffer = await fs.readFile(filePath);
-      return { record, buffer };
-    } catch {
-      return null;
-    }
+    const buffer = await blobStore.getBuffer(exportFileKey(record.fileName));
+    if (!buffer) return null;
+    return { record, buffer };
   }
 }
 

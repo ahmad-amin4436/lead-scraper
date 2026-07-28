@@ -7,12 +7,9 @@ import {
   Copy,
   ExternalLink,
   Globe,
-  Pause,
   Phone,
-  Play,
   Square,
-  Wifi,
-  WifiOff,
+  TriangleAlert,
 } from 'lucide-react';
 import { toast } from 'sonner';
 
@@ -29,21 +26,14 @@ import { formatDuration, formatNumber } from '@/utils/format';
 
 interface JobMonitorProps {
   job: JobSnapshot;
-  connected: boolean;
   streamError: string | null;
-  onCommand: (command: 'pause' | 'resume' | 'stop') => void;
+  onStop: () => void;
   commandPending: boolean;
 }
 
-export function JobMonitor({
-  job,
-  connected,
-  streamError,
-  onCommand,
-  commandPending,
-}: JobMonitorProps) {
+export function JobMonitor({ job, streamError, onStop, commandPending }: JobMonitorProps) {
   const { counters, progress, status } = job;
-  const isActive = status === 'running' || status === 'paused' || status === 'stopping';
+  const isActive = status === 'running' || status === 'queued' || status === 'stopping';
 
   const metrics = [
     { label: 'Found', value: counters.found },
@@ -66,16 +56,15 @@ export function JobMonitor({
             <CardDescription className="truncate">{progress.currentTask}</CardDescription>
           </div>
 
-          <span
-            className={cn(
-              'flex shrink-0 items-center gap-1.5 rounded-full px-2 py-1 text-[11px] font-medium',
-              connected ? 'bg-success/12 text-success' : 'bg-muted text-muted-foreground',
-            )}
-            title={connected ? 'Streaming live updates' : 'Not connected to the live stream'}
-          >
-            {connected ? <Wifi className="size-3" /> : <WifiOff className="size-3" />}
-            {connected ? 'Live' : 'Offline'}
-          </span>
+          {isActive && (
+            <span
+              className="flex shrink-0 items-center gap-1.5 rounded-full bg-muted px-2 py-1 text-[11px] font-medium text-muted-foreground"
+              title="Progress refreshes automatically"
+            >
+              <span className="size-2 animate-pulse rounded-full bg-success" />
+              Updating
+            </span>
+          )}
         </CardHeader>
 
         <CardContent className="space-y-5">
@@ -89,7 +78,7 @@ export function JobMonitor({
             <Progress
               value={progress.percent}
               indicatorClassName={cn(
-                status === 'paused' && 'bg-warning',
+                status === 'stopping' && 'bg-warning',
                 status === 'failed' && 'bg-destructive',
                 status === 'completed' && 'bg-success',
               )}
@@ -128,39 +117,23 @@ export function JobMonitor({
 
           {streamError && !job.error && (
             <Alert variant="warning">
-              <WifiOff />
+              <TriangleAlert />
               <AlertDescription>{streamError}</AlertDescription>
             </Alert>
           )}
 
-          <div className="flex flex-wrap gap-2">
-            {status === 'running' && (
-              <Button
-                variant="outline"
-                onClick={() => onCommand('pause')}
-                disabled={commandPending}
-              >
-                <Pause />
-                Pause
-              </Button>
-            )}
-            {status === 'paused' && (
-              <Button onClick={() => onCommand('resume')} disabled={commandPending}>
-                <Play />
-                Resume
-              </Button>
-            )}
-            {isActive && (
+          {isActive && (
+            <div className="flex flex-wrap gap-2">
               <Button
                 variant="destructive"
-                onClick={() => onCommand('stop')}
+                onClick={onStop}
                 disabled={commandPending || status === 'stopping'}
               >
                 <Square />
                 {status === 'stopping' ? 'Stopping…' : 'Stop'}
               </Button>
-            )}
-          </div>
+            </div>
+          )}
         </CardContent>
       </Card>
 
@@ -184,7 +157,7 @@ function LiveResults({ results }: { results: LiveResult[] }) {
       <CardHeader>
         <CardTitle>Live results</CardTitle>
         <CardDescription>
-          Newest first. Saved rows are written to Businesses.xlsx as the run progresses.
+          Newest first. Saved rows are written to the database as the run progresses.
         </CardDescription>
       </CardHeader>
       <CardContent>

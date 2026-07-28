@@ -19,7 +19,6 @@ export function BusinessStatusBadge({ status }: { status: BusinessStatus }) {
 const JOB_STATUS: Record<JobStatus, { label: string; variant: BadgeProps['variant'] }> = {
   queued: { label: 'Queued', variant: 'secondary' },
   running: { label: 'Running', variant: 'default' },
-  paused: { label: 'Paused', variant: 'warning' },
   stopping: { label: 'Stopping', variant: 'warning' },
   completed: { label: 'Completed', variant: 'success' },
   failed: { label: 'Failed', variant: 'destructive' },

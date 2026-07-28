@@ -11,22 +11,23 @@ interface RouteParams {
 export function GET(_request: Request, { params }: RouteParams): Promise<Response> {
   return handle(async () => {
     const { jobId } = await params;
-    return ok(jobManager.get(jobId).snapshot);
+    const job = await jobManager.get(jobId);
+    return ok(job.snapshot);
   });
 }
 
-/** Applies a pause / resume / stop command to a running job. */
+/** Applies a stop command to a running job. */
 export function POST(request: Request, { params }: RouteParams): Promise<Response> {
   return handle(async () => {
     const { jobId } = await params;
     const { command } = await parseJson(request, jobCommandSchema);
-    return ok(jobManager.command(jobId, command));
+    return ok(await jobManager.command(jobId, command));
   });
 }
 
 export function DELETE(_request: Request, { params }: RouteParams): Promise<Response> {
   return handle(async () => {
     const { jobId } = await params;
-    return ok(jobManager.command(jobId, 'stop'));
+    return ok(await jobManager.command(jobId, 'stop'));
   });
 }

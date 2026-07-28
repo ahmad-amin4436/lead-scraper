@@ -1,72 +1,62 @@
 import 'server-only';
 
-import fs from 'node:fs/promises';
-
-import { PATHS, ensureDataDir } from '@/lib/paths';
+import { KEYS } from '@/lib/paths';
+import { blobStore } from '@/lib/storage/blob-store';
 import type { LogEntry, LogPage, LogQuery } from '@/types/log';
 import { Mutex } from '@/utils/async';
 
-/** Entries retained in memory and after compaction. */
+/** Entries retained in storage and memory. */
 const RETAIN = 5_000;
-/** Line count that triggers a rewrite of the log file. */
-const COMPACT_AT = 20_000;
+
+const IS_SERVERLESS = Boolean(
+  process.env.NETLIFY || process.env.AWS_LAMBDA_FUNCTION_NAME || process.env.NETLIFY_BLOBS_CONTEXT,
+);
 
 /**
- * Append-only JSONL log with an in-memory tail.
+ * Activity log persisted as a single bounded JSON array in {@link blobStore}.
  *
- * Appends are cheap (one `fs.appendFile` per batch) and reads are served from
- * memory. The file is compacted to the most recent `RETAIN` entries once it
- * grows past `COMPACT_AT` lines.
+ * The original was an append-only JSONL file, but Netlify Blobs has no append,
+ * and — more importantly — the log is written by the background search worker
+ * and read by the logs page in a *different* process. So each flush reads the
+ * current array, merges the queued batch, trims to the most recent `RETAIN`,
+ * and writes it back. The array is small (bounded), so the rewrite is cheap.
+ *
+ * On a long-lived host the array is also cached in memory; on serverless the
+ * cache is bypassed so a reader always sees what the worker last wrote.
  */
 class LogRepository {
-  private entries: LogEntry[] | null = null;
-  private linesOnDisk = 0;
+  private cache: LogEntry[] | null = null;
   private readonly mutex = new Mutex();
   private queue: LogEntry[] = [];
   private flushTimer: NodeJS.Timeout | null = null;
 
-  private async ensureLoaded(): Promise<LogEntry[]> {
-    if (this.entries !== null) return this.entries;
+  private async load(): Promise<LogEntry[]> {
+    if (!IS_SERVERLESS && this.cache !== null) return this.cache;
 
-    return this.mutex.run(async () => {
-      if (this.entries !== null) return this.entries;
-      await ensureDataDir();
+    let entries: LogEntry[] = [];
+    try {
+      entries = (await blobStore.getJSON<LogEntry[]>(KEYS.logs)) ?? [];
+      if (!Array.isArray(entries)) entries = [];
+    } catch (error) {
+      console.error('[log-repository] failed to read log:', error);
+      entries = [];
+    }
 
-      let parsed: LogEntry[] = [];
-      let lineCount = 0;
-
-      try {
-        const text = await fs.readFile(PATHS.logs, 'utf8');
-        const lines = text.split('\n').filter((line) => line.trim().length > 0);
-        lineCount = lines.length;
-
-        for (const line of lines.slice(-RETAIN)) {
-          try {
-            parsed.push(JSON.parse(line) as LogEntry);
-          } catch {
-            // Skip malformed lines (e.g. a partial write before a crash).
-          }
-        }
-      } catch (error) {
-        if ((error as NodeJS.ErrnoException).code !== 'ENOENT') {
-          console.error('[log-repository] failed to read log file:', error);
-        }
-        parsed = [];
-      }
-
-      this.entries = parsed;
-      this.linesOnDisk = lineCount;
-      return this.entries;
-    });
+    if (!IS_SERVERLESS) this.cache = entries;
+    return entries;
   }
 
-  /** Buffers an entry and schedules a batched disk write. */
+  /** Buffers an entry and schedules a batched write. */
   async append(entry: LogEntry): Promise<void> {
-    const entries = await this.ensureLoaded();
-    entries.push(entry);
-    if (entries.length > RETAIN) entries.splice(0, entries.length - RETAIN);
-
     this.queue.push(entry);
+
+    if (!IS_SERVERLESS) {
+      // Keep the in-memory tail current for cheap local reads.
+      const cache = await this.load();
+      cache.push(entry);
+      if (cache.length > RETAIN) cache.splice(0, cache.length - RETAIN);
+    }
+
     this.scheduleFlush();
   }
 
@@ -76,7 +66,6 @@ class LogRepository {
       this.flushTimer = null;
       void this.flush();
     }, 250);
-    // Don't hold the process open just for a log flush.
     this.flushTimer.unref?.();
   }
 
@@ -88,39 +77,23 @@ class LogRepository {
       this.queue = [];
       if (batch.length === 0) return;
 
-      await ensureDataDir();
-      const payload = batch.map((entry) => JSON.stringify(entry)).join('\n') + '\n';
-
       try {
-        await fs.appendFile(PATHS.logs, payload, 'utf8');
-        this.linesOnDisk += batch.length;
+        // Read-modify-write the current array so a batch from another instance
+        // isn't lost. Reads storage directly (not the cache) to merge fresh.
+        const stored = (await blobStore.getJSON<LogEntry[]>(KEYS.logs)) ?? [];
+        const merged = [...(Array.isArray(stored) ? stored : []), ...batch];
+        const trimmed = merged.length > RETAIN ? merged.slice(-RETAIN) : merged;
+        await blobStore.setJSON(KEYS.logs, trimmed);
+        if (!IS_SERVERLESS) this.cache = trimmed;
       } catch (error) {
-        console.error('[log-repository] failed to append log entries:', error);
-        return;
+        console.error('[log-repository] failed to persist log entries:', error);
       }
-
-      if (this.linesOnDisk > COMPACT_AT) await this.compact();
     });
-  }
-
-  /** Rewrites the file with the retained in-memory tail. Caller holds the lock. */
-  private async compact(): Promise<void> {
-    const retained = (this.entries ?? []).slice(-RETAIN);
-    const temp = `${PATHS.logs}.${process.pid}.tmp`;
-    const payload = retained.map((entry) => JSON.stringify(entry)).join('\n') + '\n';
-
-    try {
-      await fs.writeFile(temp, payload, 'utf8');
-      await fs.rename(temp, PATHS.logs);
-      this.linesOnDisk = retained.length;
-    } catch (error) {
-      console.error('[log-repository] compaction failed:', error);
-    }
   }
 
   async query(query: LogQuery): Promise<LogPage> {
     await this.flush();
-    const entries = await this.ensureLoaded();
+    const entries = await this.load();
     const search = query.search?.toLowerCase().trim();
 
     const filtered = entries.filter((entry) => {
@@ -152,17 +125,15 @@ class LogRepository {
 
   async recent(limit: number): Promise<LogEntry[]> {
     await this.flush();
-    const entries = await this.ensureLoaded();
+    const entries = await this.load();
     return entries.slice(-limit).reverse();
   }
 
   async clear(): Promise<void> {
     await this.mutex.run(async () => {
       this.queue = [];
-      this.entries = [];
-      this.linesOnDisk = 0;
-      await ensureDataDir();
-      await fs.rm(PATHS.logs, { force: true });
+      this.cache = [];
+      await blobStore.delete(KEYS.logs);
     });
   }
 }

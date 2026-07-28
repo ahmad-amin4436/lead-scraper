@@ -3,8 +3,9 @@
 A lead generation suite built with Next.js 16 (App Router), TypeScript and Tailwind CSS v4.
 
 Discover businesses by category and location, enrich them with **publicly listed** contact
-details, and export clean lead lists to Excel or CSV. Excel is the primary datastore:
-every saved lead lands in `database/Businesses.xlsx`.
+details, and export clean lead lists to Excel or CSV. Leads persist as JSON — to Netlify
+Blobs in production, or the local `database/` folder in development — and Excel/CSV files
+are generated on demand when you export.
 
 ---
 
@@ -180,10 +181,32 @@ with `= + - @` to prevent formula injection when the file is opened in a spreads
 
 ## Deployment
 
-### Container / VPS — recommended
+### Netlify — supported
 
-The full feature set needs a long-lived Node process with a writable disk: SSE progress,
-in-process job control, and Excel writes all depend on it.
+The app is built to run on Netlify's serverless platform. All state persists to
+**Netlify Blobs** and long searches run in a **Background Function**, so no persistent
+disk or long-lived process is needed.
+
+- **Storage** — leads, settings, history, exports and logs are JSON documents in Netlify
+  Blobs; generated `.xlsx`/`.csv` export files are stored there too. Blobs is durable and
+  shared across every function instance.
+- **Search execution** — `POST /api/search` starts a job and triggers the background
+  function (`netlify/functions/run-search-background`), which runs the sweep for up to 15
+  minutes and writes progress back to the job's blob.
+- **Live progress** — the browser polls `GET /api/search/[jobId]` (there is no SSE). Runs
+  can be **stopped**; the worker checks a stop flag in the job blob at each checkpoint.
+
+Just connect the repo — `netlify.toml` and `@netlify/plugin-nextjs` handle the rest.
+Blobs authentication is automatic inside Netlify Functions; nothing to configure.
+
+> **The 15-minute ceiling.** A background function is capped at ~15 minutes. A very large
+> sweep can be cut off; partial results are saved as the run progresses, so nothing found
+> is lost, but the run may finish incomplete.
+
+### Container / VPS
+
+Also runs on any long-lived Node host. There, storage falls back to the local filesystem
+under `LEADMINE_DATA_DIR` and the search runs in-process (no background function needed).
 
 ```bash
 npm run build
@@ -192,20 +215,6 @@ LEADMINE_DATA_DIR=/data npm start
 
 Mount a persistent volume at `/data`. Any container platform, VPS, Fly.io, Render or
 Railway works.
-
-### Netlify — with real caveats
-
-`netlify.toml` is included and the UI deploys fine, but be aware of what serverless costs
-you here:
-
-1. **The filesystem is ephemeral.** The data directory falls back to the OS temp dir, so
-   the Excel database does not survive between invocations.
-2. **SSE and job control break.** Jobs live in the memory of one process; a later request
-   may hit a different instance, which won't know the job.
-3. **Function timeouts** (10–26s) will kill any non-trivial search mid-run.
-
-Netlify is a reasonable host for the dashboard if you move search execution to a
-persistent worker. For the app as built, use a container or VPS.
 
 ---
 

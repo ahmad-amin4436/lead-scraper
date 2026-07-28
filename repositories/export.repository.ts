@@ -1,16 +1,14 @@
 import 'server-only';
 
-import fs from 'node:fs/promises';
-import path from 'node:path';
-
-import { EXPORTS_DIR, PATHS, isInsideExports } from '@/lib/paths';
+import { KEYS, exportFileKey } from '@/lib/paths';
+import { blobStore } from '@/lib/storage/blob-store';
 import type { ExportRecord } from '@/types/export';
 import { JsonStore } from './json-store';
 
 const MAX_ENTRIES = 200;
 
 const store = new JsonStore<ExportRecord[]>(
-  PATHS.exports,
+  KEYS.exports,
   () => [],
   (raw) => (Array.isArray(raw) ? (raw as ExportRecord[]) : []),
 );
@@ -35,21 +33,18 @@ export const exportRepository = {
       return next.slice(0, MAX_ENTRIES);
     });
 
-    // Keep the exports folder in step with the trimmed history.
+    // Keep the stored export files in step with the trimmed history.
     await Promise.all(evicted.map((entry) => this.removeFile(entry.fileName)));
     return record;
   },
 
-  /** Absolute path for a stored export, or null if it escapes the exports dir. */
-  resolvePath(fileName: string): string | null {
-    const candidate = path.join(EXPORTS_DIR, path.basename(fileName));
-    return isInsideExports(candidate) ? candidate : null;
+  /** Storage key for a stored export file. */
+  fileKey(fileName: string): string {
+    return exportFileKey(fileName);
   },
 
   async removeFile(fileName: string): Promise<void> {
-    const target = this.resolvePath(fileName);
-    if (!target) return;
-    await fs.rm(target, { force: true });
+    await blobStore.delete(exportFileKey(fileName));
   },
 
   async remove(id: string): Promise<boolean> {

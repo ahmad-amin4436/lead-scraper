@@ -1,11 +1,11 @@
 import 'server-only';
 
-import { PATHS } from '@/lib/paths';
+import { KEYS } from '@/lib/paths';
 import { DEFAULT_SETTINGS, type AppSettings, type PublicAppSettings } from '@/types/settings';
 import { JsonStore } from './json-store';
 
 const store = new JsonStore<AppSettings>(
-  PATHS.settings,
+  KEYS.settings,
   () => ({ ...DEFAULT_SETTINGS }),
   (raw) => ({ ...DEFAULT_SETTINGS, ...(raw as Partial<AppSettings>) }),
 );

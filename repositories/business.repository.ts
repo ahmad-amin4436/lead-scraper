@@ -1,31 +1,20 @@
 import 'server-only';
 
-import { PATHS } from '@/lib/paths';
+import { KEYS } from '@/lib/paths';
+import { blobStore } from '@/lib/storage/blob-store';
 import {
-  BUSINESS_COLUMNS,
   type BusinessPage,
   type BusinessQuery,
   type BusinessRecord,
-  type BusinessSource,
   type BusinessStats,
-  type BusinessStatus,
-  type EmailStatus,
-  type WhatsAppStatus,
 } from '@/types/business';
 import { Mutex } from '@/utils/async';
 import { normalizeHost, normalizePhone } from '@/utils/normalize';
 import { normalizeText } from '@/utils/normalize';
-import {
-  cellToNumber,
-  cellToString,
-  ExcelJS,
-  loadOrCreateWorkbook,
-  saveWorkbookAtomic,
-  styleSheet,
-} from './excel/workbook';
 
-const SHEET_NAME = 'Businesses';
-const COLUMNS = BUSINESS_COLUMNS.map((c) => ({ ...c }));
+const IS_SERVERLESS = Boolean(
+  process.env.NETLIFY || process.env.AWS_LAMBDA_FUNCTION_NAME || process.env.NETLIFY_BLOBS_CONTEXT,
+);
 
 export interface InsertResult {
   inserted: BusinessRecord[];
@@ -33,12 +22,18 @@ export interface InsertResult {
 }
 
 /**
- * Excel-backed store for lead records.
+ * JSON-backed store for lead records, persisted to {@link blobStore}.
  *
- * The whole sheet is held in memory after first load — ExcelJS has no partial
- * write, so every persist rewrites the file. Mutations therefore update memory
- * immediately and mark the store dirty; `flush()` coalesces the actual write.
- * All disk access is serialised through a mutex.
+ * Lead data lives in a single JSON array blob (`businesses.json`). This replaced
+ * an Excel workbook as the primary store because Excel offered no durable,
+ * cross-instance persistence on serverless — Excel/CSV are now generated on
+ * demand by the export service instead.
+ *
+ * On a long-lived host the array and its dedupe/id indexes are cached in memory,
+ * and mutations mark the store dirty for a coalesced `flush()`. On serverless
+ * every read fetches the current blob and every mutation persists immediately,
+ * so instances never disagree; the "one search job at a time" rule keeps the
+ * single writer (the background function) from racing itself.
  */
 class BusinessRepository {
   private rows: BusinessRecord[] | null = null;
@@ -50,95 +45,22 @@ class BusinessRepository {
   private pendingFlush: Promise<void> | null = null;
 
   private async ensureLoaded(): Promise<BusinessRecord[]> {
-    if (this.rows !== null) return this.rows;
+    if (!IS_SERVERLESS && this.rows !== null) return this.rows;
 
     return this.ioMutex.run(async () => {
-      if (this.rows !== null) return this.rows;
+      if (!IS_SERVERLESS && this.rows !== null) return this.rows;
 
-      const { sheet, created } = await loadOrCreateWorkbook(
-        PATHS.businesses,
-        SHEET_NAME,
-        COLUMNS,
-      );
-
-      const rows: BusinessRecord[] = [];
-
-      if (!created) {
-        // Map by header text rather than position so a manually reordered sheet
-        // still imports correctly.
-        const headerRow = sheet.getRow(1);
-        const headerToIndex = new Map<string, number>();
-        headerRow.eachCell((cell, colNumber) => {
-          headerToIndex.set(cellToString(cell.value).toLowerCase(), colNumber);
-        });
-
-        const indexFor = (header: string, fallbackIndex: number): number =>
-          headerToIndex.get(header.toLowerCase()) ?? fallbackIndex;
-
-        sheet.eachRow((row, rowNumber) => {
-          if (rowNumber === 1) return;
-
-          const get = (header: string, fallback: number): ExcelJS.CellValue =>
-            row.getCell(indexFor(header, fallback)).value;
-
-          /**
-           * Reads a column that only exists in newer sheets. Unlike `get`, this
-           * never falls back to a position — on a legacy workbook that index
-           * belongs to a different field, so guessing would corrupt the value.
-           */
-          const getOptional = (header: string): ExcelJS.CellValue => {
-            const column = headerToIndex.get(header.toLowerCase());
-            return column === undefined ? '' : row.getCell(column).value;
-          };
-
-          const id = cellToString(get('ID', 1));
-          const name = cellToString(get('Business Name', 2));
-          if (!id && !name) return;
-
-          rows.push({
-            id: id || `row-${rowNumber}`,
-            name,
-            category: cellToString(get('Category', 3)),
-            country: cellToString(get('Country', 4)),
-            state: cellToString(get('State', 5)),
-            city: cellToString(get('City', 6)),
-            address: cellToString(get('Address', 7)),
-            phone: cellToString(get('Phone', 8)),
-            website: cellToString(get('Website', 9)),
-            email: cellToString(get('Email', 10)),
-            // Added after the original 23-column layout — header lookup only.
-            emailStatus: (cellToString(getOptional('Email Status')) ||
-              'unverified') as EmailStatus,
-            whatsapp: cellToString(get('WhatsApp', 11)),
-            whatsappStatus: (cellToString(getOptional('WhatsApp Status')) ||
-              'unverified') as WhatsAppStatus,
-            facebook: cellToString(get('Facebook', 12)),
-            instagram: cellToString(get('Instagram', 13)),
-            linkedin: cellToString(get('LinkedIn', 14)),
-            latitude: cellToNumber(get('Latitude', 15)),
-            longitude: cellToNumber(get('Longitude', 16)),
-            rating: cellToNumber(get('Google Rating', 17)),
-            reviewCount: cellToNumber(get('Review Count', 18)),
-            mapsUrl: cellToString(get('Maps URL', 19)),
-            source: (cellToString(get('Source', 20)) || 'manual') as BusinessSource,
-            dateAdded: cellToString(get('Date Added', 21)) || new Date().toISOString(),
-            status: (cellToString(get('Status', 22)) || 'new') as BusinessStatus,
-            notes: cellToString(get('Notes', 23)),
-          });
-        });
+      let rows: BusinessRecord[] = [];
+      try {
+        const stored = await blobStore.getJSON<BusinessRecord[]>(KEYS.businesses);
+        rows = Array.isArray(stored) ? stored : [];
+      } catch (error) {
+        console.error('[business-repository] failed to read store:', error);
+        rows = [];
       }
 
       this.rows = rows;
       this.rebuildIndexes();
-
-      // Materialise the file on first boot so /database/Businesses.xlsx always
-      // exists. This runs inside the mutex, so it must use the unlocked writer —
-      // calling persist() here would deadlock on the lock we already hold.
-      if (created) {
-        this.dirty = true;
-        await this.writeWorkbook();
-      }
-
       return this.rows;
     });
   }
@@ -162,45 +84,22 @@ class BusinessRepository {
   }
 
   /**
-   * Rewrites the workbook from the in-memory rows.
+   * Writes the current rows to the JSON blob.
    *
    * The caller MUST already hold `ioMutex` — this method does not acquire it,
-   * so that code paths already inside the lock can write without deadlocking.
-   * Use `persist()` from unlocked contexts.
+   * so code paths already inside the lock can write without deadlocking. Use
+   * `persist()` from unlocked contexts.
    */
-  private async writeWorkbook(): Promise<void> {
+  private async writeStore(): Promise<void> {
     if (!this.dirty || this.rows === null) return;
     const snapshot = [...this.rows];
-
-    const { workbook, sheet } = await loadOrCreateWorkbook(
-      PATHS.businesses,
-      SHEET_NAME,
-      COLUMNS,
-    );
-
-    // Replace the sheet wholesale — simpler and safer than diffing rows.
-    workbook.removeWorksheet(sheet.id);
-    const fresh = workbook.addWorksheet(SHEET_NAME);
-    styleSheet(fresh, COLUMNS);
-
-    for (const record of snapshot) {
-      fresh.addRow({
-        ...record,
-        latitude: record.latitude ?? '',
-        longitude: record.longitude ?? '',
-        rating: record.rating ?? '',
-        reviewCount: record.reviewCount ?? '',
-      });
-    }
-
-    fresh.getColumn('website').alignment = { horizontal: 'left' };
-    await saveWorkbookAtomic(workbook, PATHS.businesses);
+    await blobStore.setJSON(KEYS.businesses, snapshot);
     this.dirty = false;
   }
 
-  /** Acquires the IO lock and writes the workbook. Never call while holding it. */
+  /** Acquires the IO lock and writes the store. Never call while holding it. */
   private async persist(): Promise<void> {
-    await this.ioMutex.run(() => this.writeWorkbook());
+    await this.ioMutex.run(() => this.writeStore());
   }
 
   /**
@@ -465,8 +364,8 @@ function topCounts(values: readonly string[], limit: number): { label: string; c
 }
 
 /**
- * Module-level singleton, pinned to `globalThis` so the in-memory sheet cache
- * survives HMR module reloads in development.
+ * Module-level singleton, pinned to `globalThis` so the in-memory cache and
+ * indexes survive HMR module reloads in development.
  */
 const globalForRepo = globalThis as unknown as { leadmineBusinessRepo?: BusinessRepository };
 

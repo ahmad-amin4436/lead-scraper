@@ -1,10 +1,6 @@
 import 'server-only';
 
-import fs from 'node:fs/promises';
-
 import ExcelJS from 'exceljs';
-
-import { ensureDataDir } from '@/lib/paths';
 
 export const HEADER_FILL = 'FF1E293B';
 export const HEADER_FONT = 'FFF8FAFC';
@@ -62,62 +58,6 @@ export function styleSheet(sheet: ExcelJS.Worksheet, columns: SheetColumn[]): vo
     from: { row: 1, column: 1 },
     to: { row: 1, column: columns.length },
   };
-}
-
-export async function fileExists(filePath: string): Promise<boolean> {
-  try {
-    await fs.access(filePath);
-    return true;
-  } catch {
-    return false;
-  }
-}
-
-/**
- * Loads a workbook, creating an empty one with a styled sheet when the file is
- * missing or unreadable.
- */
-export async function loadOrCreateWorkbook(
-  filePath: string,
-  sheetName: string,
-  columns: SheetColumn[],
-): Promise<{ workbook: ExcelJS.Workbook; sheet: ExcelJS.Worksheet; created: boolean }> {
-  await ensureDataDir();
-  const workbook = new ExcelJS.Workbook();
-  workbook.creator = 'LeadMine AI';
-  workbook.lastModifiedBy = 'LeadMine AI';
-
-  if (await fileExists(filePath)) {
-    try {
-      await workbook.xlsx.readFile(filePath);
-      const existing = workbook.getWorksheet(sheetName) ?? workbook.worksheets[0];
-      if (existing) {
-        // Re-apply column keys so `row.getCell(key)` works on a sheet that was
-        // last written by Excel itself (which drops ExcelJS key metadata).
-        existing.columns = columns.map((c) => ({ header: c.header, key: c.key, width: c.width }));
-        return { workbook, sheet: existing, created: false };
-      }
-    } catch (error) {
-      console.error(`[excel] could not read ${filePath}, recreating:`, error);
-    }
-  }
-
-  const sheet = workbook.addWorksheet(sheetName, {
-    views: [{ state: 'frozen', ySplit: 1 }],
-  });
-  styleSheet(sheet, columns);
-  return { workbook, sheet, created: true };
-}
-
-/** Writes to a temp path then renames, so readers never see a half-written file. */
-export async function saveWorkbookAtomic(
-  workbook: ExcelJS.Workbook,
-  filePath: string,
-): Promise<void> {
-  await ensureDataDir();
-  const temp = `${filePath}.${process.pid}.tmp`;
-  await workbook.xlsx.writeFile(temp);
-  await fs.rename(temp, filePath);
 }
 
 export { ExcelJS };

@@ -1,5 +1,35 @@
 [
   {
+    "id": "hist_ms4xfk2j526953c3",
+    "jobId": "job_ms4xcsco2bc6e55b",
+    "request": {
+      "categories": [
+        "restaurant",
+        "cafe"
+      ],
+      "country": "US",
+      "state": "California",
+      "cities": [
+        "San Diego"
+      ],
+      "radiusMeters": 10000,
+      "maxResults": 60,
+      "enrichContacts": true,
+      "skipDuplicates": true,
+      "provider": "openstreetmap"
+    },
+    "status": "completed",
+    "startedAt": "2026-07-28T17:23:24.170Z",
+    "finishedAt": "2026-07-28T17:25:33.396Z",
+    "elapsedMs": 129208,
+    "found": 120,
+    "saved": 120,
+    "duplicates": 0,
+    "enriched": 47,
+    "failed": 0,
+    "error": null
+  },
+  {
     "id": "hist_ms4m6sd4843bc8f3",
     "jobId": "job_ms4k75mode10c143",
     "request": {

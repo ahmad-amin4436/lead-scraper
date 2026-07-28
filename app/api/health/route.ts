@@ -1,5 +1,4 @@
 import { handle, ok } from '@/lib/api/response';
-import { PATHS } from '@/lib/paths';
 import { businessRepository } from '@/repositories/business.repository';
 import { settingsRepository } from '@/repositories/settings.repository';
 import { jobManager } from '@/services/jobs/job-manager';
@@ -11,12 +10,11 @@ export function GET(): Promise<Response> {
   return handle(async () => {
     const settings = await settingsRepository.get();
     const stats = await businessRepository.stats();
-    const active = jobManager.getActive();
+    const active = await jobManager.getActive();
 
     return ok({
       status: 'ok',
-      dataDir: PATHS.dataDir,
-      workbook: PATHS.businesses,
+      storage: process.env.NETLIFY ? 'netlify-blobs' : 'filesystem',
       records: stats.total,
       activeJobId: active?.id ?? null,
       providers: listProviders(settings),
