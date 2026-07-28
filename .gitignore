@@ -46,19 +46,14 @@ next-env.d.ts
 # LeadMine data store
 #
 # `database/Businesses.xlsx` is the application's primary datastore and IS
-# tracked. The entries below keep secrets and volatile runtime state out of
-# version control.
+# tracked, along with the activity log and search history.
 # ---------------------------------------------------------------------------
 
 # Stores the Google Places API key in plaintext — never commit this.
 /database/settings.json
 
-# Runtime state: regenerated on demand, noisy in diffs.
-/database/logs.jsonl
-/database/search-history.json
+# Generated export files and their index (the folder is kept via .gitkeep).
 /database/exports.json
-
-# Generated export files (the folder itself is kept via .gitkeep).
 /database/exports/*
 !/database/exports/.gitkeep
 
