@@ -73,6 +73,39 @@ export function useDeleteBusinesses(): UseMutationResult<{ removed: number }, Er
   });
 }
 
+export interface VerifyContactsResult {
+  verified: number;
+  remaining: number;
+  candidates: number;
+  elapsedMs: number;
+}
+
+/**
+ * Backfills email/WhatsApp verification for stored leads.
+ *
+ * The route processes a bounded batch per call and reports `remaining`, so the
+ * caller loops until it hits zero rather than issuing one request that a
+ * serverless timeout would kill.
+ */
+export function useVerifyContacts(): UseMutationResult<
+  VerifyContactsResult,
+  Error,
+  { force?: boolean }
+> {
+  const client = useQueryClient();
+
+  return useMutation({
+    mutationFn: ({ force = false }) =>
+      apiFetch<VerifyContactsResult>('/api/businesses/verify', {
+        method: 'POST',
+        body: JSON.stringify({ force }),
+      }),
+    onSuccess: () => {
+      void client.invalidateQueries({ queryKey: ['businesses'] });
+    },
+  });
+}
+
 export function useUpdateBusiness(): UseMutationResult<
   unknown,
   Error,

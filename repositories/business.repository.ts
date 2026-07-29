@@ -183,6 +183,36 @@ class BusinessRepository {
     return updated;
   }
 
+  /**
+   * Replaces many records in one pass, flushing once.
+   *
+   * Calling `update()` in a loop would rewrite the entire store per record; the
+   * verification backfill touches hundreds at a time, so it needs this.
+   * Records whose id is no longer present are skipped.
+   */
+  async updateMany(records: readonly BusinessRecord[]): Promise<number> {
+    if (records.length === 0) return 0;
+
+    const rows = await this.ensureLoaded();
+    const position = new Map(rows.map((row, index) => [row.id, index]));
+    let applied = 0;
+
+    for (const record of records) {
+      const index = position.get(record.id);
+      if (index === undefined) continue;
+      rows[index] = { ...rows[index], ...record, id: record.id };
+      applied += 1;
+    }
+
+    if (applied > 0) {
+      this.rebuildIndexes();
+      this.dirty = true;
+      await this.flush();
+    }
+
+    return applied;
+  }
+
   async deleteMany(ids: readonly string[]): Promise<number> {
     const rows = await this.ensureLoaded();
     const target = new Set(ids);
@@ -318,6 +348,15 @@ function applyFilters(rows: readonly BusinessRecord[], query: BusinessQuery): Bu
     if (query.city && row.city !== query.city) return false;
     if (query.source && row.source !== query.source) return false;
     if (query.status && row.status !== query.status) return false;
+    // Records saved before verification existed have no status; treat them as
+    // 'unverified' so that filter finds them instead of silently excluding them.
+    if (query.emailStatus && (row.emailStatus || 'unverified') !== query.emailStatus) return false;
+    if (
+      query.whatsappStatus &&
+      (row.whatsappStatus || 'unverified') !== query.whatsappStatus
+    ) {
+      return false;
+    }
     if (query.minRating !== undefined && (row.rating ?? 0) < query.minRating) return false;
     if (query.minReviews !== undefined && (row.reviewCount ?? 0) < query.minReviews) return false;
     if (query.hasEmail !== undefined && Boolean(row.email) !== query.hasEmail) return false;

@@ -393,6 +393,9 @@ async function enrichRecords(
         `Enriching ${task.categoryLabel} in ${task.city} (${completed}/${withSite.length})`,
         0.4 + 0.5 * (completed / withSite.length),
       );
+      // Throttled write so a long enrichment pass keeps proving it's alive —
+      // and so the UI's progress actually advances mid-task.
+      await job.heartbeat();
     },
     (error, record) => {
       if (job.signal.aborted) return;
@@ -438,6 +441,8 @@ async function verifyRecords(
       if (outcome.whatsappStatus === 'confirmed' || outcome.whatsappStatus === 'likely') {
         job.addCount('whatsappReachable');
       }
+
+      await job.heartbeat();
     },
     (error, record) => {
       if (job.signal.aborted) return;

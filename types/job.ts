@@ -66,4 +66,13 @@ export interface JobRecord extends JobSnapshot {
   stopRequested: boolean;
   /** Wall-clock ms the run started, for elapsed/ETA math across processes. */
   startedAtMs: number;
+  /**
+   * ISO timestamp of the worker's last write. Because the worker and the reader
+   * live in different serverless instances, this is the only way to tell a slow
+   * run from a dead one — a function that times out or crashes leaves the job
+   * non-terminal forever, blocking every subsequent search.
+   *
+   * Optional so job blobs written before this field existed still load.
+   */
+  heartbeatAt?: string;
 }

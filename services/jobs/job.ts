@@ -8,6 +8,9 @@ import type { LiveResult, SearchRequest } from '@/types/search';
 /** Live results retained per job; older ones are dropped to bound blob size. */
 const MAX_RETAINED_RESULTS = 300;
 
+/** Minimum gap between throttled liveness writes. */
+const HEARTBEAT_INTERVAL_MS = 20_000;
+
 /**
  * A single search run, persisted as a JSON blob at `jobs/<id>`.
  *
@@ -25,6 +28,7 @@ export class Job {
   private record: JobRecord;
   private results: LiveResult[] = [];
   private taskFraction = 0;
+  private lastHeartbeatMs = 0;
   private readonly controller = new AbortController();
 
   private constructor(record: JobRecord, results: LiveResult[]) {
@@ -121,7 +125,21 @@ export class Job {
   async save(): Promise<void> {
     this.record.progress = this.computeProgress();
     this.record.results = [...this.results].reverse().slice(0, MAX_RETAINED_RESULTS);
+    this.record.heartbeatAt = new Date().toISOString();
+    this.lastHeartbeatMs = Date.now();
     await blobStore.setJSON(jobKey(this.record.id), this.record);
+  }
+
+  /**
+   * Writes a liveness beat, at most once per {@link HEARTBEAT_INTERVAL_MS}.
+   *
+   * Long tasks (enriching twenty sites) can otherwise run for minutes without
+   * touching storage, which would make a healthy run look abandoned. Throttled
+   * so it costs at most a couple of writes per minute.
+   */
+  async heartbeat(): Promise<void> {
+    if (Date.now() - this.lastHeartbeatMs < HEARTBEAT_INTERVAL_MS) return;
+    await this.save();
   }
 
   /**

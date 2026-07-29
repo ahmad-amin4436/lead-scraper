@@ -60,3 +60,9 @@ next-env.d.ts
 # Atomic-write temp files.
 /database/*.tmp
 /database/**/*.tmp
+
+# Migration safety backups.
+/database/*.bak-*
+
+# Job state is transient runtime data, recreated per run.
+/database/jobs/

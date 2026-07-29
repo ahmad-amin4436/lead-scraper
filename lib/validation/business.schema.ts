@@ -4,6 +4,8 @@ import {
   BUSINESS_COLUMNS,
   BUSINESS_SOURCES,
   BUSINESS_STATUSES,
+  EMAIL_STATUSES,
+  WHATSAPP_STATUSES,
   type BusinessColumnKey,
 } from '@/types/business';
 
@@ -23,6 +25,8 @@ export const businessQuerySchema = z.object({
   city: z.string().max(120).optional(),
   source: z.enum(BUSINESS_SOURCES).optional(),
   status: z.enum(BUSINESS_STATUSES).optional(),
+  emailStatus: z.enum(EMAIL_STATUSES).optional(),
+  whatsappStatus: z.enum(WHATSAPP_STATUSES).optional(),
   minRating: z.coerce.number().min(0).max(5).optional(),
   minReviews: z.coerce.number().int().min(0).optional(),
   hasEmail: z.stringbool().optional(),
@@ -49,6 +53,8 @@ export const businessJsonFilterSchema = z.object({
   city: z.string().max(120).optional(),
   source: z.enum(BUSINESS_SOURCES).optional(),
   status: z.enum(BUSINESS_STATUSES).optional(),
+  emailStatus: z.enum(EMAIL_STATUSES).optional(),
+  whatsappStatus: z.enum(WHATSAPP_STATUSES).optional(),
   minRating: z.number().min(0).max(5).optional(),
   minReviews: z.number().int().min(0).optional(),
   hasEmail: z.boolean().optional(),

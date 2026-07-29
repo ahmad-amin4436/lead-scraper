@@ -87,6 +87,28 @@ function withTimeout<T>(promise: Promise<T>, ms: number): Promise<T> {
   ]);
 }
 
+/**
+ * Does the domain resolve at all?
+ *
+ * Uses `dns.lookup`, which goes through the OS resolver rather than querying a
+ * DNS server directly. Some sandboxes and serverless runtimes block direct
+ * queries (`resolveMx`/`resolve4` fail with ECONNREFUSED) while `lookup` still
+ * works, so this is the fallback that keeps verification useful there.
+ *
+ * Returns null when the answer is genuinely inconclusive.
+ */
+async function domainResolves(domain: string): Promise<boolean | null> {
+  try {
+    await withTimeout(dns.lookup(domain), DNS_TIMEOUT_MS);
+    return true;
+  } catch (error) {
+    const code = (error as NodeJS.ErrnoException).code;
+    if (code === 'ENOTFOUND' || code === 'ENODATA') return false;
+    // EAI_AGAIN and friends are transient, not proof of absence.
+    return null;
+  }
+}
+
 /** Resolves whether a domain publishes a usable mail route. */
 async function verifyDomain(domain: string): Promise<EmailVerification> {
   const cached = domainCache.get(domain);
@@ -111,26 +133,33 @@ async function verifyDomain(domain: string): Promise<EmailVerification> {
       }
     } catch (error) {
       const code = (error as NodeJS.ErrnoException).code;
+      const exists = await domainResolves(domain);
 
       if (code === 'ENOTFOUND' || code === 'ENODATA') {
-        // No MX. RFC 5321 permits falling back to the A record, so a domain that
-        // resolves at all might still accept mail — downgrade rather than reject.
-        try {
-          await withTimeout(dns.resolve4(domain), DNS_TIMEOUT_MS);
-          result = {
-            status: 'risky',
-            reason: 'No MX record; mail may still route via the A record',
-          };
-        } catch (fallbackError) {
-          const fallbackCode = (fallbackError as NodeJS.ErrnoException).code;
-          result =
-            fallbackCode === 'ENOTFOUND' || fallbackCode === 'ENODATA'
+        // Authoritative "no MX". RFC 5321 permits falling back to the A record,
+        // so a domain that still resolves might accept mail — downgrade rather
+        // than reject outright.
+        result =
+          exists === true
+            ? { status: 'risky', reason: 'No MX record; mail may still route via the A record' }
+            : exists === false
               ? { status: 'invalid', reason: 'Domain does not exist' }
-              : { status: 'unknown', reason: 'Domain lookup failed' };
-        }
+              : { status: 'unknown', reason: 'Domain lookup was inconclusive' };
+      } else if (exists === false) {
+        // The MX query failed for an unrelated reason, but the domain provably
+        // does not resolve — that is enough to call it dead.
+        result = { status: 'invalid', reason: 'Domain does not exist' };
+      } else if (exists === true) {
+        // Direct DNS queries are unavailable in this runtime (commonly
+        // ECONNREFUSED with no local resolver). The domain resolves, but mail
+        // routing is unproven, so this is the honest middle answer.
+        result = {
+          status: 'risky',
+          reason: 'Domain resolves, but its mail records could not be checked here',
+        };
       } else {
-        // SERVFAIL, timeout, network trouble — absence of evidence, not evidence
-        // of absence. Never mark a lead invalid on an inconclusive lookup.
+        // Absence of evidence, not evidence of absence — never mark a lead dead
+        // on an inconclusive lookup.
         result = { status: 'unknown', reason: 'Domain lookup was inconclusive' };
       }
     }

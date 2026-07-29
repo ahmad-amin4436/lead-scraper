@@ -28,8 +28,18 @@ import {
   TableHeader,
   TableRow,
 } from '@/components/ui/table';
+import {
+  EMAIL_STATUS_META,
+  WHATSAPP_STATUS_META,
+} from '@/components/shared/status-badge';
 import { useBusinessStats, useCreateExport, useDeleteExport, useExports } from '@/hooks/use-api';
 import { BUSINESS_CATEGORIES } from '@/lib/constants/categories';
+import {
+  EMAIL_STATUSES,
+  WHATSAPP_STATUSES,
+  type EmailStatus,
+  type WhatsAppStatus,
+} from '@/types/business';
 import { EXPORT_TEMPLATES, type ExportFormat, type ExportTemplate } from '@/types/export';
 import { formatBytes, formatDateTime, formatNumber } from '@/utils/format';
 
@@ -51,6 +61,8 @@ export function ExportView() {
   const [format, setFormat] = React.useState<ExportFormat>('xlsx');
   const [template, setTemplate] = React.useState<ExportTemplate>('leadmine');
   const [category, setCategory] = React.useState(ANY);
+  const [emailStatus, setEmailStatus] = React.useState(ANY);
+  const [whatsappStatus, setWhatsappStatus] = React.useState(ANY);
   const [hasEmail, setHasEmail] = React.useState(false);
   const [minRating, setMinRating] = React.useState('');
 
@@ -75,6 +87,9 @@ export function ExportView() {
         template,
         filters: {
           category: category === ANY ? undefined : category,
+          emailStatus: emailStatus === ANY ? undefined : (emailStatus as EmailStatus),
+          whatsappStatus:
+            whatsappStatus === ANY ? undefined : (whatsappStatus as WhatsAppStatus),
           hasEmail: hasEmail ? true : undefined,
           minRating: Number.isFinite(parsedRating) ? parsedRating : undefined,
         },
@@ -176,6 +191,44 @@ export function ExportView() {
                     {BUSINESS_CATEGORIES.map((item) => (
                       <SelectItem key={item.id} value={item.label}>
                         {item.label}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+
+              <div className="space-y-2">
+                <Label htmlFor="exportEmailStatus">Email status</Label>
+                <Select value={emailStatus} onValueChange={setEmailStatus}>
+                  <SelectTrigger id="exportEmailStatus">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value={ANY}>Any email status</SelectItem>
+                    {EMAIL_STATUSES.map((item) => (
+                      <SelectItem key={item} value={item}>
+                        {EMAIL_STATUS_META[item].label}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+                <p className="text-xs text-muted-foreground">
+                  “Deliverable” means the domain accepts mail — not that the individual mailbox
+                  exists.
+                </p>
+              </div>
+
+              <div className="space-y-2">
+                <Label htmlFor="exportWhatsapp">WhatsApp</Label>
+                <Select value={whatsappStatus} onValueChange={setWhatsappStatus}>
+                  <SelectTrigger id="exportWhatsapp">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value={ANY}>Any WhatsApp status</SelectItem>
+                    {WHATSAPP_STATUSES.map((item) => (
+                      <SelectItem key={item} value={item}>
+                        {WHATSAPP_STATUS_META[item].label}
                       </SelectItem>
                     ))}
                   </SelectContent>

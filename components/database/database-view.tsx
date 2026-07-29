@@ -8,6 +8,7 @@ import {
   ChevronRight,
   Database,
   Download,
+  ShieldCheck,
   ExternalLink,
   Filter,
   Search,
@@ -18,7 +19,13 @@ import {
 import { toast } from 'sonner';
 
 import { PageHeader } from '@/components/shared/page-header';
-import { BusinessStatusBadge } from '@/components/shared/status-badge';
+import {
+  BusinessStatusBadge,
+  EMAIL_STATUS_META,
+  EmailStatusBadge,
+  WHATSAPP_STATUS_META,
+  WhatsAppStatusBadge,
+} from '@/components/shared/status-badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
 import { Checkbox } from '@/components/ui/checkbox';
@@ -49,10 +56,18 @@ import {
   TableHeader,
   TableRow,
 } from '@/components/ui/table';
-import { useBusinesses, useDeleteBusinesses } from '@/hooks/use-api';
+import { useBusinesses, useDeleteBusinesses, useVerifyContacts } from '@/hooks/use-api';
 import { useDebouncedValue } from '@/hooks/use-debounced-value';
 import { BUSINESS_CATEGORIES } from '@/lib/constants/categories';
-import { BUSINESS_STATUSES, type BusinessQuery, type BusinessStatus } from '@/types/business';
+import {
+  BUSINESS_STATUSES,
+  EMAIL_STATUSES,
+  WHATSAPP_STATUSES,
+  type BusinessQuery,
+  type BusinessStatus,
+  type EmailStatus,
+  type WhatsAppStatus,
+} from '@/types/business';
 import { formatDate, formatNumber } from '@/utils/format';
 
 const ANY = '__any__';
@@ -62,6 +77,8 @@ interface Filters {
   search: string;
   category: string;
   status: string;
+  emailStatus: string;
+  whatsappStatus: string;
   hasEmail: boolean;
   minRating: string;
 }
@@ -70,6 +87,8 @@ const INITIAL_FILTERS: Filters = {
   search: '',
   category: ANY,
   status: ANY,
+  emailStatus: ANY,
+  whatsappStatus: ANY,
   hasEmail: false,
   minRating: '',
 };
@@ -81,7 +100,7 @@ export function DatabaseView() {
   const [selected, setSelected] = React.useState<Set<string>>(new Set());
   const [confirmOpen, setConfirmOpen] = React.useState(false);
 
-  const { search, category, status, hasEmail, minRating } = filters;
+  const { search, category, status, emailStatus, whatsappStatus, hasEmail, minRating } = filters;
 
   const debouncedSearch = useDebouncedValue(search, 350);
   const debouncedRating = useDebouncedValue(minRating, 350);
@@ -113,6 +132,9 @@ export function DatabaseView() {
       search: debouncedSearch || undefined,
       category: category === ANY ? undefined : category,
       status: status === ANY ? undefined : (status as BusinessStatus),
+      emailStatus: emailStatus === ANY ? undefined : (emailStatus as EmailStatus),
+      whatsappStatus:
+        whatsappStatus === ANY ? undefined : (whatsappStatus as WhatsAppStatus),
       hasEmail: hasEmail ? true : undefined,
       minRating: Number.isFinite(parsedRating) ? parsedRating : undefined,
       page,
@@ -120,9 +142,20 @@ export function DatabaseView() {
       sortBy: 'dateAdded',
       sortDir: 'desc',
     };
-  }, [debouncedSearch, category, status, hasEmail, debouncedRating, page, pageSize]);
+  }, [
+    debouncedSearch,
+    category,
+    status,
+    emailStatus,
+    whatsappStatus,
+    hasEmail,
+    debouncedRating,
+    page,
+    pageSize,
+  ]);
 
   const businesses = useBusinesses(query);
+  const verifyContacts = useVerifyContacts();
   const deleteBusinesses = useDeleteBusinesses();
 
   const rows = businesses.data?.rows ?? [];
@@ -172,8 +205,39 @@ export function DatabaseView() {
     setSelected(new Set());
   };
 
+  /**
+   * Backfills verification for stored leads. The endpoint works in bounded
+   * batches so it can't outrun a serverless timeout, so keep calling until it
+   * reports nothing remaining.
+   */
+  const runVerification = async (): Promise<void> => {
+    let total = 0;
+
+    try {
+      for (;;) {
+        const result = await verifyContacts.mutateAsync({ force: false });
+        total += result.verified;
+
+        if (result.verified === 0 || result.remaining === 0) break;
+        toast.info(`Verified ${total} so far — ${result.remaining} to go…`);
+      }
+
+      toast.success(
+        total > 0 ? `Verified ${formatNumber(total)} record(s).` : 'Everything is already verified.',
+      );
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : 'Verification failed.');
+    }
+  };
+
   const filtersActive =
-    Boolean(search) || category !== ANY || status !== ANY || hasEmail || Boolean(minRating);
+    Boolean(search) ||
+    category !== ANY ||
+    status !== ANY ||
+    emailStatus !== ANY ||
+    whatsappStatus !== ANY ||
+    hasEmail ||
+    Boolean(minRating);
 
   return (
     <>
@@ -181,12 +245,23 @@ export function DatabaseView() {
         title="Excel database"
         description="Every lead saved to /database/Businesses.xlsx."
         actions={
-          <Button asChild variant="outline">
-            <Link href="/export">
-              <Download />
-              Export
-            </Link>
-          </Button>
+          <>
+            <Button
+              variant="outline"
+              onClick={runVerification}
+              loading={verifyContacts.isPending}
+              title="Check email domains and classify phone numbers for WhatsApp"
+            >
+              <ShieldCheck />
+              Verify contacts
+            </Button>
+            <Button asChild variant="outline">
+              <Link href="/export">
+                <Download />
+                Export
+              </Link>
+            </Button>
+          </>
         }
       />
 
@@ -242,6 +317,42 @@ export function DatabaseView() {
               placeholder="Min rating"
               aria-label="Minimum rating"
             />
+          </div>
+
+          <div className="grid gap-3 sm:grid-cols-2">
+            <Select
+              value={emailStatus}
+              onValueChange={(next) => updateFilter('emailStatus', next)}
+            >
+              <SelectTrigger aria-label="Filter by email status">
+                <SelectValue placeholder="Any email status" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value={ANY}>Any email status</SelectItem>
+                {EMAIL_STATUSES.map((item) => (
+                  <SelectItem key={item} value={item}>
+                    Email: {EMAIL_STATUS_META[item].label}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+
+            <Select
+              value={whatsappStatus}
+              onValueChange={(next) => updateFilter('whatsappStatus', next)}
+            >
+              <SelectTrigger aria-label="Filter by WhatsApp status">
+                <SelectValue placeholder="Any WhatsApp status" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value={ANY}>Any WhatsApp status</SelectItem>
+                {WHATSAPP_STATUSES.map((item) => (
+                  <SelectItem key={item} value={item}>
+                    WhatsApp: {WHATSAPP_STATUS_META[item].label}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
           </div>
 
           <div className="flex flex-wrap items-center justify-between gap-3">
@@ -366,16 +477,24 @@ export function DatabaseView() {
                       <TableCell>
                         <div className="space-y-0.5 text-xs">
                           {row.email ? (
-                            <a
-                              href={`mailto:${row.email}`}
-                              className="block max-w-[220px] truncate text-success hover:underline"
-                            >
-                              {row.email}
-                            </a>
+                            <div className="flex items-center gap-1.5">
+                              <a
+                                href={`mailto:${row.email}`}
+                                className="max-w-[190px] truncate text-success hover:underline"
+                              >
+                                {row.email}
+                              </a>
+                              <EmailStatusBadge status={row.emailStatus || 'unverified'} />
+                            </div>
                           ) : (
                             <span className="text-muted-foreground">No email</span>
                           )}
-                          {row.phone && <p className="text-muted-foreground">{row.phone}</p>}
+                          {row.phone && (
+                            <div className="flex items-center gap-1.5">
+                              <span className="text-muted-foreground">{row.phone}</span>
+                              <WhatsAppStatusBadge status={row.whatsappStatus || 'unverified'} />
+                            </div>
+                          )}
                           {row.website && (
                             <a
                               href={row.website}

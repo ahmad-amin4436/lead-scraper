@@ -81,6 +81,43 @@ any access control. Only publicly listed information is stored.
 An SSRF guard resolves every target hostname and refuses private, loopback, link-local and
 reserved ranges — website URLs come from third-party providers and are treated as untrusted.
 
+### Contact verification
+
+Every lead carries an **Email Status** and a **WhatsApp Status**, both filterable on the
+Database and Export pages. Read them for what they actually are:
+
+| Email status    | Meaning                                                              |
+| --------------- | -------------------------------------------------------------------- |
+| **Deliverable** | The domain publishes a mail server (MX record), so mail can route.    |
+| **Risky**       | Disposable provider, or no MX so delivery is uncertain.               |
+| **Dead**        | Malformed, or the domain does not exist / accepts no mail.            |
+| **Unknown**     | The DNS lookup was inconclusive — worth re-checking.                  |
+| **Unchecked**   | Not verified yet.                                                     |
+
+> **"Deliverable" is not "this mailbox exists."** Proving that needs an SMTP `RCPT TO`
+> probe, which is deliberately not implemented: major providers refuse or lie about it,
+> catch-all domains accept everything, and probing at volume gets your IP blacklisted —
+> damaging the deliverability of the very campaigns this data feeds. Treat it as "safe to
+> attempt". An inconclusive lookup is never reported as dead.
+
+| WhatsApp status | Meaning                                                              |
+| --------------- | -------------------------------------------------------------------- |
+| **On WhatsApp** | The business published a WhatsApp link on its own website.            |
+| **Likely**      | Valid mobile line, so WhatsApp is probable — inferred, not checked.   |
+| **Unlikely**    | Landline, or the number could not be validated.                       |
+| **No number**   | No phone on the record.                                               |
+
+> **WhatsApp registration cannot be verified for a number you don't own.** The Business API
+> only answers for your own numbers, and the unofficial endpoints that claim otherwise
+> violate WhatsApp's terms and get numbers banned. Only *On WhatsApp* is evidence; the rest
+> is line-type inference from [libphonenumber](https://github.com/google/libphonenumber),
+> which is accurate per country. A `wa.me` link is generated for mobile numbers, but
+> clicking it is still the only way to confirm.
+
+New leads are verified during the run. To backfill existing ones, use **Verify contacts**
+on the Database page (or `POST /api/businesses/verify`), which works in bounded batches so
+it can't outrun a serverless timeout.
+
 ---
 
 ## Excel database

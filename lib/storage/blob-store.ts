@@ -18,7 +18,11 @@ import { getStore, type Store } from '@netlify/blobs';
  * function is immediately visible to a polling request. Every method is keyed by
  * a plain string; callers namespace with prefixes (e.g. `job/<id>`).
  */
+export type BlobStoreKind = 'netlify-blobs' | 'filesystem';
+
 export interface BlobStore {
+  /** Which backend is actually in use — surfaced by /api/health. */
+  readonly kind: BlobStoreKind;
   getText(key: string): Promise<string | null>;
   setText(key: string, value: string): Promise<void>;
   getJSON<T>(key: string): Promise<T | null>;
@@ -32,27 +36,43 @@ export interface BlobStore {
 const STORE_NAME = 'leadmine';
 
 /**
- * True when a Netlify Blobs backend is available. Netlify sets these in every
- * function runtime; `netlify dev` sets them too. Plain `next dev` does not, so
- * we transparently fall back to the filesystem there.
+ * Opens the Netlify Blobs store, or returns null when this runtime has no Blobs
+ * backend.
+ *
+ * This deliberately *attempts the operation* rather than sniffing environment
+ * variables. An earlier version keyed off `process.env.NETLIFY`, which Netlify
+ * sets during builds but NOT inside the Next.js function runtime — so production
+ * silently fell back to the per-instance ephemeral filesystem, and every lead
+ * written by one invocation was invisible to the next.
+ *
+ * `getStore()` throws synchronously when the environment is unconfigured, which
+ * makes eager construction an honest capability probe. Explicit credentials are
+ * honoured as an escape hatch if auto-configuration ever fails.
  */
-function hasNetlifyBlobs(): boolean {
-  // The runtime injects credentials automatically inside Netlify Functions.
-  // NETLIFY is set during builds/functions; the blobs context vars confirm the
-  // API is reachable. Either signal is enough to try Blobs.
-  return Boolean(
-    process.env.NETLIFY_BLOBS_CONTEXT ||
-      process.env.NETLIFY ||
-      process.env.AWS_LAMBDA_FUNCTION_NAME,
-  );
+function openNetlifyStore(): Store | null {
+  const siteID =
+    process.env.NETLIFY_BLOBS_SITE_ID ?? process.env.NETLIFY_SITE_ID ?? process.env.SITE_ID;
+  const token = process.env.NETLIFY_BLOBS_TOKEN ?? process.env.NETLIFY_API_TOKEN;
+
+  try {
+    return siteID && token
+      ? getStore({ name: STORE_NAME, siteID, token, consistency: 'strong' })
+      : getStore({ name: STORE_NAME, consistency: 'strong' });
+  } catch (error) {
+    console.warn(
+      '[storage] Netlify Blobs unavailable, using filesystem:',
+      error instanceof Error ? error.message : error,
+    );
+    return null;
+  }
 }
 
 class NetlifyBlobStore implements BlobStore {
-  private store: Store | null = null;
+  readonly kind = 'netlify-blobs' as const;
+
+  constructor(private readonly store: Store) {}
 
   private store_(): Store {
-    // Lazily created so importing this module never fails outside Netlify.
-    this.store ??= getStore(STORE_NAME);
     return this.store;
   }
 
@@ -105,6 +125,8 @@ class NetlifyBlobStore implements BlobStore {
  * rename) so a crash never leaves a half-written file.
  */
 class FileBlobStore implements BlobStore {
+  readonly kind = 'filesystem' as const;
+
   private ensured: Promise<void> | null = null;
 
   constructor(private readonly root: string) {}
@@ -214,15 +236,13 @@ function resolveLocalRoot(): string {
 }
 
 function createStore(): BlobStore {
-  if (hasNetlifyBlobs()) {
-    try {
-      return new NetlifyBlobStore();
-    } catch (error) {
-      // Should never happen inside Netlify, but never let storage init crash the
-      // module graph — a filesystem fallback keeps a misconfigured host limping.
-      console.error('[storage] Netlify Blobs unavailable, falling back to filesystem:', error);
-    }
-  }
+  const netlify = openNetlifyStore();
+  if (netlify) return new NetlifyBlobStore(netlify);
+
+  // Only correct on a host with a real, persistent disk. On a serverless
+  // platform this directory is per-instance and ephemeral, so data written by
+  // one invocation will not be visible to the next — /api/health reports the
+  // active backend so this is diagnosable rather than silent.
   return new FileBlobStore(resolveLocalRoot());
 }
 

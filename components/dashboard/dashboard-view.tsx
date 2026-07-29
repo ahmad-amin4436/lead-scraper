@@ -8,7 +8,8 @@ import {
   Phone,
   Search,
   Share2,
-  Sparkles,
+  MessageCircle,
+  ShieldCheck,
   Star,
   TrendingUp,
 } from 'lucide-react';
@@ -68,7 +69,7 @@ export function DashboardView() {
         </Alert>
       )}
 
-      <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
+      <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-5">
         <StatCard
           label="Total leads"
           value={formatNumber(total)}
@@ -85,10 +86,18 @@ export function DashboardView() {
           loading={stats.isPending}
         />
         <StatCard
-          label="Enriched"
-          value={formatNumber(data?.enriched ?? 0)}
-          hint="Contact discovery completed"
-          icon={Sparkles}
+          label="Deliverable emails"
+          value={formatNumber(data?.verifiedEmails ?? 0)}
+          hint="Domain accepts mail"
+          icon={ShieldCheck}
+          tone="success"
+          loading={stats.isPending}
+        />
+        <StatCard
+          label="WhatsApp reachable"
+          value={formatNumber(data?.whatsappReachable ?? 0)}
+          hint="Confirmed or likely"
+          icon={MessageCircle}
           tone="warning"
           loading={stats.isPending}
         />

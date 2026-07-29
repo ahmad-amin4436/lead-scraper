@@ -10,36 +10,49 @@ import type { SearchRequest } from '@/types/search';
 
 export const dynamic = 'force-dynamic';
 
-/** True on Netlify, where a background function runs the search out-of-band. */
-const ON_NETLIFY = Boolean(process.env.NETLIFY);
+/**
+ * Attempts to hand the run to the Netlify Background Function.
+ *
+ * Returns true only on a `202 Accepted`, which is what a background function
+ * replies with when it has taken ownership of the work. Anything else — a 404
+ * because we are not on Netlify, or a network error — means nobody picked it up.
+ *
+ * This probes the capability instead of reading `process.env.NETLIFY`, which is
+ * set at build time but NOT inside the Next.js function runtime. That mismatch
+ * meant production believed it was running locally: the search executed inline
+ * in the request handler and was killed by the function timeout part-way
+ * through, leaving the job stranded.
+ */
+async function triggerBackgroundFunction(jobId: string): Promise<boolean> {
+  const host = (await headers()).get('host');
+  if (!host) return false;
+
+  const proto = host.startsWith('localhost') || host.startsWith('127.') ? 'http' : 'https';
+  const url = `${proto}://${host}/.netlify/functions/run-search-background`;
+
+  try {
+    const response = await fetch(url, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ jobId }),
+    });
+    return response.status === 202;
+  } catch (error) {
+    console.warn('[api/search] background function unreachable:', error);
+    return false;
+  }
+}
 
 /**
  * Starts the search run.
  *
- * On Netlify the search executes in a Background Function (up to 15 min), so the
- * request just triggers it and returns. Locally (`next dev`, `next start`) there
- * is no background function, so the run executes in-process — fire-and-forget —
- * which is safe on a long-lived host and keeps dev behaviour identical.
+ * Preferred path is the Background Function (up to 15 minutes). When that isn't
+ * available — `next dev`, `next start`, a container — the run executes in-process
+ * fire-and-forget, which is safe on a long-lived host.
  */
 async function startRun(jobId: string): Promise<void> {
-  if (ON_NETLIFY) {
-    const host = (await headers()).get('host');
-    const proto = host?.startsWith('localhost') || host?.startsWith('127.') ? 'http' : 'https';
-    const url = `${proto}://${host}/.netlify/functions/run-search-background`;
+  if (await triggerBackgroundFunction(jobId)) return;
 
-    // Fire the background function. It returns 202 immediately and continues on
-    // its own; we don't await its completion.
-    await fetch(url, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ jobId }),
-    }).catch((error: unknown) => {
-      console.error('[api/search] failed to trigger background function:', error);
-    });
-    return;
-  }
-
-  // Local / long-lived host: run inline without blocking the response.
   void runQueuedJob(jobId).catch((error: unknown) => {
     console.error('[api/search] inline job runner crashed:', error);
   });
