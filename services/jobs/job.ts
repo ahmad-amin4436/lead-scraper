@@ -1,4 +1,4 @@
-import 'server-only';
+import '@/lib/server-guard';
 
 import { jobKey } from '@/lib/paths';
 import { blobStore } from '@/lib/storage/blob-store';

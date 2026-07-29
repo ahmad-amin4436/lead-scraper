@@ -1,4 +1,4 @@
-import 'server-only';
+import '@/lib/server-guard';
 
 import type { ResolvedLocation } from '@/types/search';
 import { googlePlacesProvider } from './google-places.provider';

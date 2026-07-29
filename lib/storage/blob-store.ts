@@ -1,4 +1,4 @@
-import 'server-only';
+import '@/lib/server-guard';
 
 import fs from 'node:fs/promises';
 import path from 'node:path';

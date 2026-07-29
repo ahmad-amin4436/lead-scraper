@@ -1,4 +1,4 @@
-import 'server-only';
+import '@/lib/server-guard';
 
 import { AppError, toErrorMessage } from '@/lib/errors';
 import { exportFileKey } from '@/lib/paths';

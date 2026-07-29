@@ -1,4 +1,4 @@
-import 'server-only';
+import '@/lib/server-guard';
 
 import ExcelJS from 'exceljs';
 

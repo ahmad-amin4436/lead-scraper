@@ -1,4 +1,4 @@
-import 'server-only';
+import '@/lib/server-guard';
 
 import axios, { AxiosError, type AxiosInstance, type AxiosRequestConfig } from 'axios';
 

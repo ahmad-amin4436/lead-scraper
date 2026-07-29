@@ -1,4 +1,4 @@
-import 'server-only';
+import '@/lib/server-guard';
 
 import { ProviderError } from '@/lib/errors';
 import type { ProviderBusiness, ProviderQuery, ResolvedLocation } from '@/types/search';

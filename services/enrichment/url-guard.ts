@@ -1,4 +1,4 @@
-import 'server-only';
+import '@/lib/server-guard';
 
 import dns from 'node:dns/promises';
 import net from 'node:net';

@@ -1,4 +1,4 @@
-import 'server-only';
+import '@/lib/server-guard';
 
 import { BUSINESS_COLUMNS, type BusinessRecord } from '@/types/business';
 import type { ExportTemplate } from '@/types/export';

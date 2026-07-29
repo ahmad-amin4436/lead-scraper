@@ -1,4 +1,4 @@
-import 'server-only';
+import '@/lib/server-guard';
 
 import { KEYS } from '@/lib/paths';
 import { blobStore } from '@/lib/storage/blob-store';
@@ -24,6 +24,39 @@ const IS_SERVERLESS = Boolean(
  * On a long-lived host the array is also cached in memory; on serverless the
  * cache is bypassed so a reader always sees what the worker last wrote.
  */
+/**
+ * Parses the stored log, accepting both on-disk formats.
+ *
+ * Current writes produce a single JSON array. Earlier versions appended
+ * newline-delimited JSON (hence the `.jsonl` key), and those files still exist —
+ * feeding one to `JSON.parse` throws on the second line, which made every load
+ * fail and silently discard the history. Malformed individual lines are skipped
+ * rather than failing the whole read.
+ */
+function parseLog(raw: string | null): LogEntry[] {
+  if (!raw) return [];
+
+  const text = raw.trim();
+  if (!text) return [];
+
+  if (text.startsWith('[')) {
+    const parsed: unknown = JSON.parse(text);
+    return Array.isArray(parsed) ? (parsed as LogEntry[]) : [];
+  }
+
+  const entries: LogEntry[] = [];
+  for (const line of text.split('\n')) {
+    const trimmed = line.trim();
+    if (!trimmed) continue;
+    try {
+      entries.push(JSON.parse(trimmed) as LogEntry);
+    } catch {
+      // A partial line from an interrupted append — skip it.
+    }
+  }
+  return entries;
+}
+
 class LogRepository {
   private cache: LogEntry[] | null = null;
   private readonly mutex = new Mutex();
@@ -35,9 +68,9 @@ class LogRepository {
 
     let entries: LogEntry[] = [];
     try {
-      entries = (await blobStore.getJSON<LogEntry[]>(KEYS.logs)) ?? [];
-      if (!Array.isArray(entries)) entries = [];
+      entries = parseLog(await blobStore.getText(KEYS.logs));
     } catch (error) {
+      // A corrupt log must never take down the run that is writing to it.
       console.error('[log-repository] failed to read log:', error);
       entries = [];
     }
@@ -80,8 +113,8 @@ class LogRepository {
       try {
         // Read-modify-write the current array so a batch from another instance
         // isn't lost. Reads storage directly (not the cache) to merge fresh.
-        const stored = (await blobStore.getJSON<LogEntry[]>(KEYS.logs)) ?? [];
-        const merged = [...(Array.isArray(stored) ? stored : []), ...batch];
+        const stored = parseLog(await blobStore.getText(KEYS.logs));
+        const merged = [...stored, ...batch];
         const trimmed = merged.length > RETAIN ? merged.slice(-RETAIN) : merged;
         await blobStore.setJSON(KEYS.logs, trimmed);
         if (!IS_SERVERLESS) this.cache = trimmed;

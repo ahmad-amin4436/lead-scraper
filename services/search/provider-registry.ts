@@ -1,4 +1,4 @@
-import 'server-only';
+import '@/lib/server-guard';
 
 import { ConfigurationError } from '@/lib/errors';
 import type { BusinessSource } from '@/types/business';

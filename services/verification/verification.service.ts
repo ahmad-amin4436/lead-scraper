@@ -1,4 +1,4 @@
-import 'server-only';
+import '@/lib/server-guard';
 
 import type { BusinessRecord } from '@/types/business';
 import { emailVerifier } from './email-verifier';

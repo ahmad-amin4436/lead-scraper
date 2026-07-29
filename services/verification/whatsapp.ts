@@ -1,4 +1,4 @@
-import 'server-only';
+import '@/lib/server-guard';
 
 import { parsePhoneNumberFromString, type CountryCode } from 'libphonenumber-js/max';
 

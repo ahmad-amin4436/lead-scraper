@@ -1,4 +1,4 @@
-import 'server-only';
+import '@/lib/server-guard';
 
 import { getCategoryLabel } from '@/lib/constants/categories';
 import { getCountryName } from '@/lib/constants/locations';

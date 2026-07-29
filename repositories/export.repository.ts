@@ -1,4 +1,4 @@
-import 'server-only';
+import '@/lib/server-guard';
 
 import { KEYS, exportFileKey } from '@/lib/paths';
 import { blobStore } from '@/lib/storage/blob-store';

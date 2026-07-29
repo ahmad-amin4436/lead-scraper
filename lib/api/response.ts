@@ -1,4 +1,4 @@
-import 'server-only';
+import '@/lib/server-guard';
 
 import { ZodError, type ZodType } from 'zod';
 

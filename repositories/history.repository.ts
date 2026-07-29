@@ -1,4 +1,4 @@
-import 'server-only';
+import '@/lib/server-guard';
 
 import { KEYS } from '@/lib/paths';
 import type { SearchHistoryEntry } from '@/types/search';

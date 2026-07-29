@@ -1,5 +1,89 @@
 [
   {
+    "id": "hist_ms5ntart4c5d42c5",
+    "jobId": "job_fntest",
+    "request": {
+      "categories": [
+        "florist"
+      ],
+      "country": "IE",
+      "cities": [
+        "Sligo"
+      ],
+      "radiusMeters": 3000,
+      "maxResults": 3,
+      "enrichContacts": false,
+      "skipDuplicates": true,
+      "provider": "openstreetmap"
+    },
+    "status": "completed",
+    "startedAt": "2026-07-29T05:44:02.389Z",
+    "finishedAt": "2026-07-29T05:44:04.550Z",
+    "elapsedMs": 1515,
+    "found": 2,
+    "saved": 0,
+    "duplicates": 2,
+    "enriched": 0,
+    "failed": 0,
+    "error": null
+  },
+  {
+    "id": "hist_ms5nsljm873243ab",
+    "jobId": "job_fntest",
+    "request": {
+      "categories": [
+        "florist"
+      ],
+      "country": "IE",
+      "cities": [
+        "Sligo"
+      ],
+      "radiusMeters": 3000,
+      "maxResults": 3,
+      "enrichContacts": false,
+      "skipDuplicates": true,
+      "provider": "openstreetmap"
+    },
+    "status": "completed",
+    "startedAt": "2026-07-29T05:43:22.081Z",
+    "finishedAt": "2026-07-29T05:43:31.855Z",
+    "elapsedMs": 9121,
+    "found": 2,
+    "saved": 0,
+    "duplicates": 2,
+    "enriched": 0,
+    "failed": 0,
+    "error": null
+  },
+  {
+    "id": "hist_ms5nq90qc62b98f0",
+    "jobId": "job_fntest",
+    "request": {
+      "categories": [
+        "florist"
+      ],
+      "country": "IE",
+      "cities": [
+        "Sligo"
+      ],
+      "radiusMeters": 3000,
+      "maxResults": 3,
+      "enrichContacts": false,
+      "skipDuplicates": true,
+      "provider": "openstreetmap"
+    },
+    "status": "completed",
+    "startedAt": "2026-07-29T05:41:39.708Z",
+    "finishedAt": "2026-07-29T05:41:42.311Z",
+    "elapsedMs": 1953,
+    "found": 2,
+    "saved": 2,
+    "duplicates": 0,
+    "enriched": 0,
+    "failed": 0,
+    "error": null
+  },
+  {
     "id": "hist_ms4xfk2j526953c3",
     "jobId": "job_ms4xcsco2bc6e55b",
     "request": {

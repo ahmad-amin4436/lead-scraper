@@ -1,4 +1,4 @@
-import 'server-only';
+import '@/lib/server-guard';
 
 import type { BusinessSource } from '@/types/business';
 import type { ProviderBusiness, ProviderQuery, ResolvedLocation } from '@/types/search';

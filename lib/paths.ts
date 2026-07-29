@@ -1,4 +1,4 @@
-import 'server-only';
+import '@/lib/server-guard';
 
 /**
  * Storage keys for every persisted artifact.

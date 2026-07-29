@@ -1,4 +1,4 @@
-import 'server-only';
+import '@/lib/server-guard';
 
 import { AppError, NotFoundError } from '@/lib/errors';
 import { KEYS, jobKey } from '@/lib/paths';

@@ -1,4 +1,4 @@
-import 'server-only';
+import '@/lib/server-guard';
 
 import { KEYS } from '@/lib/paths';
 import { DEFAULT_SETTINGS, type AppSettings, type PublicAppSettings } from '@/types/settings';

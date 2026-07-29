@@ -1,4 +1,4 @@
-import 'server-only';
+import '@/lib/server-guard';
 
 import { ProviderError } from '@/lib/errors';
 import { getCategory } from '@/lib/constants/categories';

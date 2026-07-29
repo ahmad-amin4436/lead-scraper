@@ -1,4 +1,4 @@
-import 'server-only';
+import '@/lib/server-guard';
 
 import { blobStore } from '@/lib/storage/blob-store';
 import { Mutex } from '@/utils/async';

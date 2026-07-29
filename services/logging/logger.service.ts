@@ -1,4 +1,4 @@
-import 'server-only';
+import '@/lib/server-guard';
 
 import { logRepository } from '@/repositories/log.repository';
 import type { LogEntry, LogEvent, LogLevel } from '@/types/log';

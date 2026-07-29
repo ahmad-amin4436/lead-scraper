@@ -1,4 +1,4 @@
-import 'server-only';
+import '@/lib/server-guard';
 
 import { settingsRepository } from '@/repositories/settings.repository';
 import { resolveProvider } from '@/services/search/provider-registry';
