@@ -61,3 +61,7 @@ next-env.d.ts
 
 # Job state is transient runtime data, recreated per run.
 /database/jobs/
+
+# .NET build output
+backend/**/bin/
+backend/**/obj/

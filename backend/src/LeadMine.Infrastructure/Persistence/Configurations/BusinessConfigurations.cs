@@ -1,0 +1,153 @@
+using LeadMine.Domain.Entities;
+using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.Metadata.Builders;
+
+namespace LeadMine.Infrastructure.Persistence.Configurations;
+
+public class BusinessConfiguration : IEntityTypeConfiguration<Business>
+{
+    public void Configure(EntityTypeBuilder<Business> builder)
+    {
+        builder.ToTable("Businesses");
+        builder.HasKey(b => b.Id);
+
+        builder.Property(b => b.Name).HasMaxLength(256).IsRequired();
+        builder.Property(b => b.Category).HasMaxLength(128);
+        builder.Property(b => b.Country).HasMaxLength(128);
+        builder.Property(b => b.State).HasMaxLength(128);
+        builder.Property(b => b.City).HasMaxLength(128);
+        builder.Property(b => b.Address).HasMaxLength(512);
+        builder.Property(b => b.Phone).HasMaxLength(64);
+        builder.Property(b => b.Website).HasMaxLength(512);
+        builder.Property(b => b.Email).HasMaxLength(256);
+        builder.Property(b => b.WhatsApp).HasMaxLength(512);
+        builder.Property(b => b.Facebook).HasMaxLength(512);
+        builder.Property(b => b.Instagram).HasMaxLength(512);
+        builder.Property(b => b.LinkedIn).HasMaxLength(512);
+        builder.Property(b => b.MapsUrl).HasMaxLength(1024);
+        builder.Property(b => b.Notes).HasMaxLength(2000);
+
+        builder.Property(b => b.DedupeWebsiteKey).HasMaxLength(256);
+        builder.Property(b => b.DedupePhoneKey).HasMaxLength(32);
+        builder.Property(b => b.DedupeNameKey).HasMaxLength(384);
+
+        // Enums persist as int; the DTO layer exposes the names.
+        builder.Property(b => b.Source).HasConversion<int>();
+        builder.Property(b => b.Status).HasConversion<int>();
+        builder.Property(b => b.EmailStatus).HasConversion<int>();
+        builder.Property(b => b.WhatsAppStatus).HasConversion<int>();
+
+        builder.Property(b => b.Rating).HasPrecision(3, 2);
+
+        // Indexes chosen to match the list filters the UI actually issues.
+        builder.HasIndex(b => b.Name);
+        builder.HasIndex(b => b.Category);
+        builder.HasIndex(b => new { b.Country, b.City });
+        builder.HasIndex(b => b.Status);
+        builder.HasIndex(b => b.EmailStatus);
+        builder.HasIndex(b => b.WhatsAppStatus);
+        builder.HasIndex(b => b.CreatedAt);
+
+        // Duplicate detection: filtered so many NULLs don't bloat the index.
+        builder.HasIndex(b => b.DedupeWebsiteKey).HasFilter("[DedupeWebsiteKey] IS NOT NULL");
+        builder.HasIndex(b => b.DedupePhoneKey).HasFilter("[DedupePhoneKey] IS NOT NULL");
+        builder.HasIndex(b => b.DedupeNameKey).HasFilter("[DedupeNameKey] IS NOT NULL");
+
+        builder.HasOne(b => b.SearchJob)
+            .WithMany(j => j.Businesses)
+            .HasForeignKey(b => b.SearchJobId)
+            // Keep the leads if their originating run is purged.
+            .OnDelete(DeleteBehavior.SetNull);
+    }
+}
+
+public class SearchJobConfiguration : IEntityTypeConfiguration<SearchJob>
+{
+    public void Configure(EntityTypeBuilder<SearchJob> builder)
+    {
+        builder.ToTable("SearchJobs");
+        builder.HasKey(j => j.Id);
+
+        builder.Property(j => j.Status).HasConversion<int>();
+        builder.Property(j => j.RequestJson).IsRequired();
+        builder.Property(j => j.CurrentTask).HasMaxLength(256);
+        builder.Property(j => j.Error).HasMaxLength(2000);
+
+        builder.HasIndex(j => j.Status);
+        builder.HasIndex(j => j.StartedAt);
+        // Supports the "find runs whose worker died" sweep.
+        builder.HasIndex(j => new { j.Status, j.HeartbeatAt });
+    }
+}
+
+public class ExportRecordConfiguration : IEntityTypeConfiguration<ExportRecord>
+{
+    public void Configure(EntityTypeBuilder<ExportRecord> builder)
+    {
+        builder.ToTable("Exports");
+        builder.HasKey(e => e.Id);
+
+        builder.Property(e => e.FileName).HasMaxLength(256).IsRequired();
+        builder.Property(e => e.Format).HasMaxLength(16).IsRequired();
+        builder.Property(e => e.Template).HasMaxLength(32).IsRequired();
+        builder.Property(e => e.StorageKey).HasMaxLength(512);
+        builder.Property(e => e.FiltersJson).IsRequired();
+
+        builder.HasIndex(e => e.CreatedAt);
+    }
+}
+
+public class ActivityLogConfiguration : IEntityTypeConfiguration<ActivityLog>
+{
+    public void Configure(EntityTypeBuilder<ActivityLog> builder)
+    {
+        builder.ToTable("ActivityLogs");
+        builder.HasKey(l => l.Id);
+
+        builder.Property(l => l.Level).HasConversion<int>();
+        builder.Property(l => l.Event).HasMaxLength(64).IsRequired();
+        builder.Property(l => l.Message).HasMaxLength(2000).IsRequired();
+        builder.Property(l => l.ContextJson).IsRequired();
+
+        builder.HasIndex(l => l.Timestamp);
+        builder.HasIndex(l => l.Level);
+        builder.HasIndex(l => l.Event);
+        builder.HasIndex(l => l.SearchJobId);
+    }
+}
+
+public class AppSettingConfiguration : IEntityTypeConfiguration<AppSetting>
+{
+    public void Configure(EntityTypeBuilder<AppSetting> builder)
+    {
+        builder.ToTable("AppSettings");
+        builder.HasKey(s => s.Id);
+
+        builder.Property(s => s.Key).HasMaxLength(128).IsRequired();
+        builder.Property(s => s.Value).HasMaxLength(2000);
+        builder.Property(s => s.Description).HasMaxLength(512);
+
+        builder.HasIndex(s => s.Key).IsUnique();
+    }
+}
+
+public class AuditEntryConfiguration : IEntityTypeConfiguration<AuditEntry>
+{
+    public void Configure(EntityTypeBuilder<AuditEntry> builder)
+    {
+        builder.ToTable("AuditEntries");
+        builder.HasKey(a => a.Id);
+
+        builder.Property(a => a.UserName).HasMaxLength(256);
+        builder.Property(a => a.Action).HasMaxLength(128).IsRequired();
+        builder.Property(a => a.EntityType).HasMaxLength(128).IsRequired();
+        builder.Property(a => a.EntityId).HasMaxLength(128);
+        builder.Property(a => a.IpAddress).HasMaxLength(64);
+        builder.Property(a => a.UserAgent).HasMaxLength(512);
+        builder.Property(a => a.DetailsJson).IsRequired();
+
+        builder.HasIndex(a => a.Timestamp);
+        builder.HasIndex(a => a.UserId);
+        builder.HasIndex(a => a.Action);
+    }
+}

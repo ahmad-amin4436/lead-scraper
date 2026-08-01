@@ -1,0 +1,8 @@
+<Solution>
+  <Folder Name="/src/">
+    <Project Path="src/LeadMine.Api/LeadMine.Api.csproj" />
+    <Project Path="src/LeadMine.Application/LeadMine.Application.csproj" />
+    <Project Path="src/LeadMine.Domain/LeadMine.Domain.csproj" />
+    <Project Path="src/LeadMine.Infrastructure/LeadMine.Infrastructure.csproj" />
+  </Folder>
+</Solution>
