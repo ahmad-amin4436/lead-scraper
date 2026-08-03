@@ -147,6 +147,12 @@ public static class DependencyInjection
         services.AddScoped<IEmailTemplateService, EmailTemplateService>();
         services.AddScoped<IEmailService, EmailService>();
         services.AddScoped<ILeadIngestService, LeadIngestService>();
+        services.AddScoped<ISearchJobService, SearchJobService>();
+
+        // Recovers jobs whose worker died. Hosted in the API because that is the
+        // process guaranteed to be running — in the worker it would die with the
+        // very failure it exists to recover from.
+        services.AddHostedService<StaleJobReaperService>();
 
         return services;
     }

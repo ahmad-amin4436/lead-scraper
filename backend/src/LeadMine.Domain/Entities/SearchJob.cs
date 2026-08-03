@@ -60,4 +60,47 @@ public class SearchJob : AuditableEntity
     public Guid? RequestedByUserId { get; set; }
 
     public ICollection<Business> Businesses { get; set; } = new List<Business>();
+
+    // --- lease / durability -------------------------------------------------
+
+    /// <summary>
+    /// Identifier of the worker currently holding this job.
+    /// <para>
+    /// A job is claimed by exactly one worker at a time. Combined with
+    /// <see cref="LeaseExpiresAt"/> this is what lets several workers run
+    /// concurrently without two of them scraping the same run.
+    /// </para>
+    /// </summary>
+    public string? LeaseOwner { get; set; }
+
+    /// <summary>
+    /// When the current claim lapses. A worker extends it on every heartbeat; if
+    /// the process dies the lease simply expires and the job becomes claimable
+    /// again, which is what makes a crash recoverable without human action.
+    /// </summary>
+    public DateTimeOffset? LeaseExpiresAt { get; set; }
+
+    /// <summary>
+    /// How many times this job has been claimed. A run that keeps dying is
+    /// eventually failed rather than retried forever — a poison job must not
+    /// occupy the queue indefinitely.
+    /// </summary>
+    public int Attempts { get; set; }
+
+    /// <summary>
+    /// JSON array of the `city|category` task keys already finished.
+    /// <para>
+    /// Checkpointing at task granularity is what makes a resumed job continue
+    /// rather than restart: the worker skips these, so an interrupted 200-task
+    /// sweep does not redo the 180 it had already completed.
+    /// </para>
+    /// </summary>
+    public string CompletedTaskKeysJson { get; set; } = "[]";
+
+    /// <summary>Live results for the UI, capped. JSON, newest first.</summary>
+    public string RecentResultsJson { get; set; } = "[]";
+
+    /// <summary>True when no worker holds a live lease on this job.</summary>
+    public bool IsLeaseExpired(DateTimeOffset now) =>
+        LeaseExpiresAt is null || LeaseExpiresAt <= now;
 }
