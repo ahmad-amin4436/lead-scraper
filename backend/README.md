@@ -133,6 +133,22 @@ Host shutdown is handled separately from a crash: the runner leaves the job non-
   carries no ratings or review counts (so the rating/review filters do nothing there). Community
   Overpass mirrors also throttle heavy use: a task that fails for that reason is checkpointed and
   the sweep continues.
+- **Enable the Geocoding API too, not just Places (New).** Without it, city lookup falls back to
+  Nominatim, which permits one request per second — a 25-city sweep then spends 25 seconds just
+  locating. The run still works; it is only slower. The fallback is logged as a warning naming
+  the returned status, so a key restricted to the wrong API does not fail silently.
+
+### Outbound connections
+
+Both scraper HTTP clients connect through `ScraperConnect`, not `SocketsHttpHandler`'s default.
+
+The default handler opens a single dual-mode IPv6 socket. Where IPv6 is present but broken —
+common, and measured on the original development machine — that socket stalls for tens of
+seconds before failing even though the host has working IPv4 addresses. Against Google Places
+it turned a 1.2-second call into a 60-second timeout, which failed the task. `ScraperConnect`
+implements the essential part of Happy Eyeballs (RFC 8305), which curl and browsers already do:
+resolve every address, race family-matched connections staggered by 250 ms, take the first to
+succeed. A broken family now costs a quarter of a second instead of the request budget.
 
 ### What the crawler will not do
 
@@ -303,3 +319,7 @@ Scraper, against live OpenStreetMap and real business websites:
 - Re-running an identical search saved 0 and reported the overlap as duplicates.
 - A run whose every task failed reports `Failed` with the provider error, not `Completed, 0
   found` — the latter reads as "there are none there", which is a costlier wrong conclusion.
+- **Stop** is cooperative and observed at the next checkpoint: a live run went
+  `Stopping → Stopped` with the lease released.
+- Google Places: a Bath law-firm sweep with `minRating: 4.0` returned 8 leads carrying ratings,
+  review counts and E.164 phone numbers, 6 of them enriched with MX-verified addresses.

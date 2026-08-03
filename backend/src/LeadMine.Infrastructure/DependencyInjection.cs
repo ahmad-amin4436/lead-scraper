@@ -1,3 +1,4 @@
+using System.Net;
 using System.Text;
 using LeadMine.Application.Interfaces;
 using LeadMine.Domain.Identity;
@@ -187,11 +188,17 @@ public static class DependencyInjection
         // them — a loaded Overpass mirror — because HttpClient.Timeout is a hard
         // per-client ceiling. Quicker providers narrow it per request.
         services.AddHttpClient(ScraperHttpClients.Provider, client =>
-        {
-            client.Timeout = ScraperHttpClients.ProviderClientTimeout;
-            client.DefaultRequestHeaders.UserAgent.ParseAdd(scraper.UserAgent);
-            client.DefaultRequestHeaders.Accept.ParseAdd("application/json");
-        });
+            {
+                client.Timeout = ScraperHttpClients.ProviderClientTimeout;
+                client.DefaultRequestHeaders.UserAgent.ParseAdd(scraper.UserAgent);
+                client.DefaultRequestHeaders.Accept.ParseAdd("application/json");
+            })
+            .ConfigurePrimaryHttpMessageHandler(() => new SocketsHttpHandler
+            {
+                ConnectCallback = ScraperConnect.ConnectAsync,
+                AutomaticDecompression = DecompressionMethods.All,
+                PooledConnectionLifetime = TimeSpan.FromMinutes(5),
+            });
 
         // Crawling business websites. Redirects are capped and compression is on:
         // this client follows links found in untrusted pages.
@@ -201,15 +208,17 @@ public static class DependencyInjection
                 client.DefaultRequestHeaders.UserAgent.ParseAdd(scraper.UserAgent);
                 client.DefaultRequestHeaders.Accept.ParseAdd("text/html,application/xhtml+xml");
             })
-            .ConfigurePrimaryHttpMessageHandler(() => new HttpClientHandler
+            .ConfigurePrimaryHttpMessageHandler(() => new SocketsHttpHandler
             {
+                ConnectCallback = ScraperConnect.ConnectAsync,
                 AllowAutoRedirect = true,
                 MaxAutomaticRedirections = 4,
-                AutomaticDecompression = System.Net.DecompressionMethods.All,
+                AutomaticDecompression = DecompressionMethods.All,
                 // Business sites are frequently misconfigured. A bad certificate
                 // is a reason to skip a lead, not to trust it — so validation
                 // stays on and the fetch simply fails.
                 UseCookies = false,
+                PooledConnectionLifetime = TimeSpan.FromMinutes(5),
             });
 
         services.AddSingleton<GooglePlacesProvider>();

@@ -246,6 +246,21 @@ public sealed class GooglePlacesProvider(
         if (!response.IsSuccessStatusCode) return null;
 
         var payload = await response.Content.ReadFromJsonAsync<GeocodeResponse>(JsonOptions, deadline.Token);
+
+        // The Geocoding API answers HTTP 200 with a `status` field, so a
+        // configuration error (the API not enabled on the project, a key
+        // restricted to the wrong referrer) looks like a successful request that
+        // simply found nothing. Returning null would silently push every lookup
+        // onto Nominatim's 1-request-per-second budget with no explanation.
+        if (payload?.Status is { } status && status is not ("OK" or "ZERO_RESULTS"))
+        {
+            logger.LogWarning(
+                "Google Geocoding returned {Status} for \"{Address}\" ({Message}). Falling back to Nominatim, which is slower and rate-limited.",
+                status, address, payload.ErrorMessage ?? "no detail");
+
+            return null;
+        }
+
         var first = payload?.Results?.FirstOrDefault();
         var location = first?.Geometry?.Location;
 

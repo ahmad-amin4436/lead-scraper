@@ -37,7 +37,10 @@ public class BusinessConfiguration : IEntityTypeConfiguration<Business>
         builder.Property(b => b.EmailStatus).HasConversion<int>();
         builder.Property(b => b.WhatsAppStatus).HasConversion<int>();
 
-        builder.Property(b => b.Rating).HasPrecision(3, 2);
+        // No HasPrecision here. Precision/scale are decimal concepts; applied to
+        // a double EF emits `float(3)`, which SQL Server stores as 4-byte `real`
+        // — so a rating of 4.9 came back as 4.900000095367432 and would show
+        // that way in an export. Plain `float` round-trips it exactly.
 
         // Indexes chosen to match the list filters the UI actually issues.
         builder.HasIndex(b => b.Name);

@@ -49,6 +49,161 @@ public static class ScraperHttpClients
     }
 }
 
+/// <summary>
+/// Opens outbound connections the way curl and browsers do, instead of the way
+/// <see cref="SocketsHttpHandler"/> does by default.
+/// <para>
+/// The default handler connects through a single dual-mode IPv6 socket. On a
+/// network where IPv6 is present but broken — common, and measured on the
+/// original development machine — that socket stalls for tens of seconds before
+/// failing, even when the host has perfectly good IPv4 addresses. Against Google
+/// Places it turned a 1.2-second call into a 20+ second one, which then tripped
+/// the request deadline and failed the task.
+/// </para>
+/// <para>
+/// This implements the essential part of Happy Eyeballs (RFC 8305): resolve all
+/// addresses, start a family-matched connection attempt for each staggered by
+/// <see cref="AttemptStagger"/>, and take whichever completes first. A broken
+/// family costs a quarter of a second rather than the whole request budget.
+/// </para>
+/// </summary>
+public static class ScraperConnect
+{
+    /// <summary>Delay before racing the next address. RFC 8305 suggests 250 ms.</summary>
+    private static readonly TimeSpan AttemptStagger = TimeSpan.FromMilliseconds(250);
+
+    public static async ValueTask<Stream> ConnectAsync(
+        SocketsHttpConnectionContext context,
+        CancellationToken ct)
+    {
+        var host = context.DnsEndPoint.Host;
+        var port = context.DnsEndPoint.Port;
+
+        // A literal address needs no resolution and no racing.
+        if (IPAddress.TryParse(host, out var literal))
+        {
+            return await OpenAsync(literal, port, ct);
+        }
+
+        var addresses = await Dns.GetHostAddressesAsync(host, ct);
+
+        if (addresses.Length == 0)
+        {
+            throw new SocketException((int)SocketError.HostNotFound);
+        }
+
+        if (addresses.Length == 1)
+        {
+            return await OpenAsync(addresses[0], port, ct);
+        }
+
+        return await RaceAsync(Interleave(addresses), port, ct);
+    }
+
+    /// <summary>
+    /// Alternates address families, so a host that returns eight IPv4 addresses
+    /// before its IPv6 one still races the families against each other rather
+    /// than working through one family first.
+    /// </summary>
+    private static IPAddress[] Interleave(IPAddress[] addresses)
+    {
+        var v6 = addresses.Where(a => a.AddressFamily == AddressFamily.InterNetworkV6).ToArray();
+        var v4 = addresses.Where(a => a.AddressFamily == AddressFamily.InterNetwork).ToArray();
+
+        var ordered = new List<IPAddress>(addresses.Length);
+
+        for (var i = 0; i < Math.Max(v6.Length, v4.Length); i++)
+        {
+            // IPv6 first, per RFC 8305 — the stagger is what protects us when it
+            // is the broken one.
+            if (i < v6.Length) ordered.Add(v6[i]);
+            if (i < v4.Length) ordered.Add(v4[i]);
+        }
+
+        return [.. ordered];
+    }
+
+    private static async ValueTask<Stream> RaceAsync(IPAddress[] addresses, int port, CancellationToken ct)
+    {
+        using var winner = CancellationTokenSource.CreateLinkedTokenSource(ct);
+
+        var attempts = new List<Task<Stream>>(addresses.Length);
+
+        for (var i = 0; i < addresses.Length; i++)
+        {
+            var address = addresses[i];
+            var delay = AttemptStagger * i;
+
+            attempts.Add(Task.Run(async () =>
+            {
+                if (delay > TimeSpan.Zero) await Task.Delay(delay, winner.Token);
+                return await OpenAsync(address, port, winner.Token);
+            }, winner.Token));
+        }
+
+        var pending = new List<Task<Stream>>(attempts);
+        Exception? lastError = null;
+
+        while (pending.Count > 0)
+        {
+            var finished = await Task.WhenAny(pending);
+            pending.Remove(finished);
+
+            if (finished.IsCompletedSuccessfully)
+            {
+                // Stop the losers, then drain them so their sockets are closed
+                // rather than left dangling on a background thread.
+                await winner.CancelAsync();
+                _ = DiscardAsync(pending);
+
+                return finished.Result;
+            }
+
+            lastError = finished.Exception?.GetBaseException() ?? lastError;
+        }
+
+        ct.ThrowIfCancellationRequested();
+        throw lastError ?? new SocketException((int)SocketError.HostUnreachable);
+    }
+
+    /// <summary>Disposes any connection that won the race too late to be used.</summary>
+    private static async Task DiscardAsync(IEnumerable<Task<Stream>> losers)
+    {
+        foreach (var loser in losers)
+        {
+            try
+            {
+                await using var stream = await loser;
+            }
+            catch
+            {
+                // Cancelled or failed — nothing to clean up.
+            }
+        }
+    }
+
+    private static async ValueTask<Stream> OpenAsync(IPAddress address, int port, CancellationToken ct)
+    {
+        // Family-matched, never dual-mode: that is the whole point.
+        var socket = new Socket(address.AddressFamily, SocketType.Stream, ProtocolType.Tcp)
+        {
+            // Latency matters more than packet efficiency for small API calls.
+            NoDelay = true,
+        };
+
+        try
+        {
+            await socket.ConnectAsync(new IPEndPoint(address, port), ct);
+            return new NetworkStream(socket, ownsSocket: true);
+        }
+        catch
+        {
+            socket.Dispose();
+            throw;
+        }
+    }
+}
+
 /// <summary>Retry helpers shared by the scraper's outbound calls.</summary>
 public static class ScraperRetry
 {
