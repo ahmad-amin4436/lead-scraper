@@ -58,7 +58,6 @@ dotnet ef database update --project src/LeadMine.Infrastructure --startup-projec
 | `Jwt:RefreshTokenDays` | appsettings | Default 7. |
 | `Seed:AdminEmail` | appsettings | Default `admin@leadmine.local`. |
 | `Seed:AdminPassword` | user-secrets / env | **No admin is created if unset** — a default here would be a published credential. |
-| `Cors:AllowedOrigins` | appsettings | Defaults to the Next.js dev origin. |
 | `Scraper:GoogleApiKey` | user-secrets / env | Optional. Empty ⇒ OpenStreetMap only, which needs no key. |
 | `Scraper:*` | appsettings | Scraper tuning — see [The scraper](#the-scraper). |
 

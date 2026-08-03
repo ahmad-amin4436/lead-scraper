@@ -103,14 +103,18 @@ builder.Services.AddSwaggerGen(options =>
 const string CorsPolicy = "LeadMineCors";
 builder.Services.AddCors(options =>
 {
-    var origins = builder.Configuration.GetSection("Cors:AllowedOrigins").Get<string[]>()
-                  ?? ["http://localhost:3000"];
-
     options.AddPolicy(CorsPolicy, policy => policy
-        .WithOrigins(origins)
+        // Reflects back whatever Origin the caller sent rather than a literal
+        // "*", so every origin is allowed without tripping the CORS spec's ban
+        // on combining a wildcard origin with credentialed requests (ASP.NET
+        // Core throws at runtime if AllowAnyOrigin() is paired with
+        // AllowCredentials()). Fine here because the API authenticates with a
+        // bearer token, not a cookie the browser attaches automatically — an
+        // arbitrary site reflecting this origin still can't forge a caller's
+        // token, which is the actual thing credentialed CORS normally guards.
+        .SetIsOriginAllowed(_ => true)
         .AllowAnyHeader()
         .AllowAnyMethod()
-        // Required for credentialed requests from the Next.js front end.
         .AllowCredentials());
 });
 
