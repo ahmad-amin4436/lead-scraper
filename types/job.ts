@@ -63,6 +63,12 @@ export interface JobSnapshot {
  * the in-memory `AbortController` that could not span serverless invocations.
  */
 export interface JobRecord extends JobSnapshot {
+  /**
+   * The user who started the run. Captured from the authenticated session at
+   * creation, because the worker executes later with no session of its own and
+   * scraped leads must still be attributed to the right owner.
+   */
+  ownerUserId?: string | null;
   stopRequested: boolean;
   /** Wall-clock ms the run started, for elapsed/ETA math across processes. */
   startedAtMs: number;

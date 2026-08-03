@@ -95,6 +95,7 @@ export function SearchView() {
       skipDuplicates: rerun?.skipDuplicates ?? config.skipDuplicatesByDefault,
       minRating: rerun?.minRating,
       minReviews: rerun?.minReviews,
+      leadKind: rerun?.leadKind ?? 'Any',
       provider: rerun?.provider ?? config.defaultProvider,
     };
   }, [settings.data, rerun]);

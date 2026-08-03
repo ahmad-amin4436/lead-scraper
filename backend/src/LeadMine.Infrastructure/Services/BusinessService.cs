@@ -323,7 +323,12 @@ public sealed partial class BusinessService(
             (candidate.DedupeNameKey != null && b.DedupeNameKey == candidate.DedupeNameKey), ct);
     }
 
-    private static void ApplyDedupeKeys(Business entity)
+    /// <summary>
+    /// Computes the normalised identity keys used for duplicate detection.
+    /// Internal so the ingest path derives them the same way — two different
+    /// implementations would silently disagree about what a duplicate is.
+    /// </summary>
+    internal static void ApplyDedupeKeys(Business entity)
     {
         entity.DedupeWebsiteKey = NormalizeHost(entity.Website);
 

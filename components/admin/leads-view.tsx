@@ -21,6 +21,7 @@ import {
 } from '@/components/admin/status-badges';
 import { PageHeader } from '@/components/shared/page-header';
 import { useAuth } from '@/components/providers/auth-provider';
+import { LEAD_KIND_OPTIONS } from '@/lib/constants/lead-kinds';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
 import { Checkbox } from '@/components/ui/checkbox';
@@ -214,6 +215,7 @@ export function BackendLeadsView() {
   const [search, setSearch] = React.useState('');
   const [source, setSource] = React.useState<string>(ANY);
   const [status, setStatus] = React.useState<string>(ANY);
+  const [kind, setKind] = React.useState<string>('Any');
   const [page, setPage] = React.useState(1);
   const [selected, setSelected] = React.useState<Set<string>>(new Set());
   const [editing, setEditing] = React.useState<BackendBusiness | null>(null);
@@ -229,10 +231,12 @@ export function BackendLeadsView() {
       search: debouncedSearch || undefined,
       source: source === ANY ? undefined : (source as BackendSource),
       status: status === ANY ? undefined : status,
+      // 'Any' is the API's own no-op value, so send nothing rather than a filter.
+      kind: kind === 'Any' ? undefined : kind,
       page,
       pageSize: 25,
     }),
-    [debouncedSearch, source, status, page],
+    [debouncedSearch, source, status, kind, page],
   );
 
   const businesses = useBackendBusinesses(query);
@@ -376,6 +380,25 @@ export function BackendLeadsView() {
               <SelectItem value="Partial">Partial</SelectItem>
               <SelectItem value="NoWebsite">No website</SelectItem>
               <SelectItem value="EnrichmentFailed">Enrich failed</SelectItem>
+            </SelectContent>
+          </Select>
+          <Select
+            value={kind}
+            onValueChange={(next) => {
+              setKind(next);
+              setPage(1);
+              setSelected(new Set());
+            }}
+          >
+            <SelectTrigger className="w-52" aria-label="Filter by lead type">
+              <SelectValue placeholder="Lead type" />
+            </SelectTrigger>
+            <SelectContent>
+              {LEAD_KIND_OPTIONS.map((option) => (
+                <SelectItem key={option.value} value={option.value}>
+                  {option.label}
+                </SelectItem>
+              ))}
             </SelectContent>
           </Select>
           {selected.size > 0 && hasPermission('leads.delete') && (

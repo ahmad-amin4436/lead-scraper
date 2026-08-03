@@ -37,7 +37,11 @@ export class Job {
   }
 
   /** Creates a fresh job and persists its initial state. */
-  static async create(id: string, request: SearchRequest): Promise<Job> {
+  static async create(
+    id: string,
+    request: SearchRequest,
+    ownerUserId?: string | null,
+  ): Promise<Job> {
     const now = new Date();
     const record: JobRecord = {
       id,
@@ -62,6 +66,7 @@ export class Job {
       finishedAt: null,
       error: null,
       results: [],
+      ownerUserId: ownerUserId ?? null,
       stopRequested: false,
     };
 
@@ -107,6 +112,11 @@ export class Job {
 
   get signal(): AbortSignal {
     return this.controller.signal;
+  }
+
+  /** Who the scraped leads belong to. Null for runs started without a session. */
+  get ownerUserId(): string | null {
+    return this.record.ownerUserId ?? null;
   }
 
   get isTerminal(): boolean {

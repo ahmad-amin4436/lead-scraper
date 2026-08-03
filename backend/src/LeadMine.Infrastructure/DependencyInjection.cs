@@ -146,6 +146,7 @@ public static class DependencyInjection
         services.AddScoped<IEmailSender, SmtpEmailSender>();
         services.AddScoped<IEmailTemplateService, EmailTemplateService>();
         services.AddScoped<IEmailService, EmailService>();
+        services.AddScoped<ILeadIngestService, LeadIngestService>();
 
         return services;
     }

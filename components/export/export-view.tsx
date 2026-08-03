@@ -1,17 +1,15 @@
 'use client';
 
 import * as React from 'react';
-import { Download, FileSpreadsheet, FileText, Package, Trash2 } from 'lucide-react';
+import { Download, FileSpreadsheet, FileText, Loader2, TriangleAlert } from 'lucide-react';
 import { toast } from 'sonner';
 
 import { PageHeader } from '@/components/shared/page-header';
-import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
-import { Checkbox } from '@/components/ui/checkbox';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
-import { Alert, AlertDescription, EmptyState, Separator, Skeleton } from '@/components/ui/misc';
+import { Alert, AlertDescription, Separator, Skeleton } from '@/components/ui/misc';
 import {
   Select,
   SelectContent,
@@ -28,98 +26,139 @@ import {
   TableHeader,
   TableRow,
 } from '@/components/ui/table';
-import {
-  EMAIL_STATUS_META,
-  WHATSAPP_STATUS_META,
-} from '@/components/shared/status-badge';
-import { useBusinessStats, useCreateExport, useDeleteExport, useExports } from '@/hooks/use-api';
-import { BUSINESS_CATEGORIES } from '@/lib/constants/categories';
-import {
-  EMAIL_STATUSES,
-  WHATSAPP_STATUSES,
-  type EmailStatus,
-  type WhatsAppStatus,
-} from '@/types/business';
-import { EXPORT_TEMPLATES, type ExportFormat, type ExportTemplate } from '@/types/export';
-import { formatBytes, formatDateTime, formatNumber } from '@/utils/format';
+import { useBackendBusinesses, useBackendBusinessStats } from '@/hooks/use-leads';
+import { useDebouncedValue } from '@/hooks/use-debounced-value';
+import { LEAD_KIND_OPTIONS } from '@/lib/constants/lead-kinds';
+import { cn } from '@/lib/utils';
+import { formatNumber } from '@/utils/format';
 
 const ANY = '__any__';
+const PREVIEW_ROWS = 10;
 
-const TEMPLATE_LABELS: Record<ExportTemplate, string> = {
-  leadmine: 'LeadMine — all 23 fields',
-  hubspot: 'HubSpot — company import',
-  salesforce: 'Salesforce — lead import',
-};
+type ExportFormat = 'xlsx' | 'csv';
+type ExportTemplate = 'leadmine' | 'hubspot' | 'salesforce';
 
-const TEMPLATE_HINTS: Record<ExportTemplate, string> = {
-  leadmine: 'The complete record, matching the Excel database layout.',
-  hubspot: 'Column names match HubSpot company properties for a direct import.',
-  salesforce: 'Column names match Salesforce standard Lead fields.',
-};
+const TEMPLATES: { value: ExportTemplate; label: string; hint: string }[] = [
+  {
+    value: 'leadmine',
+    label: 'LeadMine — every field',
+    hint: 'The complete record, including verification statuses.',
+  },
+  {
+    value: 'hubspot',
+    label: 'HubSpot — company import',
+    hint: 'Column names match HubSpot company properties.',
+  },
+  {
+    value: 'salesforce',
+    label: 'Salesforce — lead import',
+    hint: 'Column names match Salesforce standard Lead fields.',
+  },
+];
 
+/**
+ * Export straight from this page.
+ *
+ * The file is generated server-side from SQL and streamed back, so nothing is
+ * assembled in the browser and the export always reflects exactly the rows the
+ * signed-in user is allowed to see. Filters mirror the Leads screen, and the
+ * preview shows what will actually be written before anything downloads.
+ */
 export function ExportView() {
   const [format, setFormat] = React.useState<ExportFormat>('xlsx');
   const [template, setTemplate] = React.useState<ExportTemplate>('leadmine');
-  const [category, setCategory] = React.useState(ANY);
-  const [emailStatus, setEmailStatus] = React.useState(ANY);
-  const [whatsappStatus, setWhatsappStatus] = React.useState(ANY);
-  const [hasEmail, setHasEmail] = React.useState(false);
-  const [minRating, setMinRating] = React.useState('');
+  const [kind, setKind] = React.useState('Any');
+  const [status, setStatus] = React.useState(ANY);
+  const [search, setSearch] = React.useState('');
+  const [downloading, setDownloading] = React.useState(false);
 
-  const stats = useBusinessStats();
-  const exportsQuery = useExports();
-  const createExport = useCreateExport();
-  const deleteExport = useDeleteExport();
+  const debouncedSearch = useDebouncedValue(search, 350);
 
-  const records = exportsQuery.data ?? [];
+  const filters = React.useMemo(
+    () => ({
+      search: debouncedSearch || undefined,
+      kind: kind === 'Any' ? undefined : kind,
+      status: status === ANY ? undefined : status,
+    }),
+    [debouncedSearch, kind, status],
+  );
 
-  const handleExport = (): void => {
-    const parsedRating = Number.parseFloat(minRating);
+  const stats = useBackendBusinessStats();
 
-    if (Number.isFinite(parsedRating) && (parsedRating < 0 || parsedRating > 5)) {
-      toast.error('Minimum rating must be between 0 and 5.');
-      return;
+  // Doubles as the row-count check and the preview.
+  const preview = useBackendBusinesses({
+    ...filters,
+    page: 1,
+    pageSize: PREVIEW_ROWS,
+    sortBy: 'createdAt',
+    sortDir: 'desc',
+  });
+
+  const matching = preview.data?.total ?? 0;
+  const rows = preview.data?.items ?? [];
+
+  /**
+   * Streams the generated file. Uses fetch + blob rather than navigating to the
+   * URL so the session cookie is sent, errors surface as a toast instead of a
+   * blank tab, and the button can show real progress.
+   */
+  const download = async (): Promise<void> => {
+    if (matching === 0) return;
+
+    setDownloading(true);
+
+    try {
+      const params = new URLSearchParams({ format, template });
+      for (const [key, value] of Object.entries(filters)) {
+        if (value !== undefined) params.set(key, String(value));
+      }
+
+      const response = await fetch(`/api/exports/download?${params.toString()}`);
+
+      if (!response.ok) {
+        const problem = (await response.json().catch(() => null)) as
+          | { error?: { message?: string } }
+          | null;
+        throw new Error(problem?.error?.message ?? `Export failed (HTTP ${response.status}).`);
+      }
+
+      const blob = await response.blob();
+      const disposition = response.headers.get('Content-Disposition') ?? '';
+      const suggested = /filename="?([^"]+)"?/.exec(disposition)?.[1];
+
+      const url = URL.createObjectURL(blob);
+      const anchor = document.createElement('a');
+      anchor.href = url;
+      anchor.download = suggested ?? `leads.${format}`;
+      document.body.appendChild(anchor);
+      anchor.click();
+      anchor.remove();
+      // Release the object URL once the download has been handed to the browser.
+      URL.revokeObjectURL(url);
+
+      toast.success(`Exported ${formatNumber(matching)} lead(s).`);
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : 'Export failed.');
+    } finally {
+      setDownloading(false);
     }
-
-    createExport.mutate(
-      {
-        format,
-        template,
-        filters: {
-          category: category === ANY ? undefined : category,
-          emailStatus: emailStatus === ANY ? undefined : (emailStatus as EmailStatus),
-          whatsappStatus:
-            whatsappStatus === ANY ? undefined : (whatsappStatus as WhatsAppStatus),
-          hasEmail: hasEmail ? true : undefined,
-          minRating: Number.isFinite(parsedRating) ? parsedRating : undefined,
-        },
-      },
-      {
-        onSuccess: (record) => {
-          toast.success(`Exported ${formatNumber(record.rowCount)} record(s).`);
-          // Trigger the browser download immediately.
-          window.location.href = `/api/exports/${record.id}`;
-        },
-        onError: (error) => toast.error(error.message),
-      },
-    );
   };
 
   return (
     <>
       <PageHeader
         title="Export"
-        description="Generate Excel, CSV, or CRM-ready files from your lead database."
+        description="Download your leads as Excel or CSV, ready for a CRM import."
       />
 
-      <div className="grid gap-6 lg:grid-cols-[minmax(0,1fr)_minmax(0,1.4fr)]">
+      <div className="grid gap-6 lg:grid-cols-[minmax(0,1fr)_minmax(0,1.3fr)]">
         <Card className="h-fit">
           <CardHeader>
-            <CardTitle>New export</CardTitle>
+            <CardTitle>Build the file</CardTitle>
             <CardDescription>
-              {stats.data
-                ? `${formatNumber(stats.data.total)} record(s) available before filtering.`
-                : 'Loading database…'}
+              {stats.isPending
+                ? 'Loading your leads…'
+                : `${formatNumber(stats.data?.total ?? 0)} lead(s) in your database.`}
             </CardDescription>
           </CardHeader>
           <CardContent className="space-y-5">
@@ -136,11 +175,12 @@ export function ExportView() {
                       type="button"
                       onClick={() => setFormat(option)}
                       aria-pressed={active}
-                      className={`flex items-center gap-2 rounded-lg border p-3 text-left text-sm transition-colors ${
+                      className={cn(
+                        'flex items-center gap-2 rounded-lg border p-3 text-left text-sm transition-colors',
                         active
                           ? 'border-primary bg-primary/8 font-medium text-primary'
-                          : 'border-border hover:bg-accent'
-                      }`}
+                          : 'border-border hover:bg-accent',
+                      )}
                     >
                       <Icon className="size-4 shrink-0" />
                       <span>
@@ -156,7 +196,7 @@ export function ExportView() {
             </div>
 
             <div className="space-y-2">
-              <Label htmlFor="template">Column template</Label>
+              <Label htmlFor="template">Column layout</Label>
               <Select
                 value={template}
                 onValueChange={(next) => setTemplate(next as ExportTemplate)}
@@ -165,209 +205,146 @@ export function ExportView() {
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
-                  {EXPORT_TEMPLATES.map((option) => (
-                    <SelectItem key={option} value={option}>
-                      {TEMPLATE_LABELS[option]}
+                  {TEMPLATES.map((option) => (
+                    <SelectItem key={option.value} value={option.value}>
+                      {option.label}
                     </SelectItem>
                   ))}
                 </SelectContent>
               </Select>
-              <p className="text-xs text-muted-foreground">{TEMPLATE_HINTS[template]}</p>
+              <p className="text-xs text-muted-foreground">
+                {TEMPLATES.find((t) => t.value === template)?.hint}
+              </p>
             </div>
 
             <Separator />
 
             <div className="space-y-4">
-              <p className="text-sm font-medium">Filters</p>
+              <p className="text-sm font-medium">Which leads?</p>
 
               <div className="space-y-2">
-                <Label htmlFor="exportCategory">Category</Label>
-                <Select value={category} onValueChange={setCategory}>
-                  <SelectTrigger id="exportCategory">
+                <Label htmlFor="exportKind">Lead type</Label>
+                <Select value={kind} onValueChange={setKind}>
+                  <SelectTrigger id="exportKind">
                     <SelectValue />
                   </SelectTrigger>
                   <SelectContent>
-                    <SelectItem value={ANY}>All categories</SelectItem>
-                    {BUSINESS_CATEGORIES.map((item) => (
-                      <SelectItem key={item.id} value={item.label}>
-                        {item.label}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              </div>
-
-              <div className="space-y-2">
-                <Label htmlFor="exportEmailStatus">Email status</Label>
-                <Select value={emailStatus} onValueChange={setEmailStatus}>
-                  <SelectTrigger id="exportEmailStatus">
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value={ANY}>Any email status</SelectItem>
-                    {EMAIL_STATUSES.map((item) => (
-                      <SelectItem key={item} value={item}>
-                        {EMAIL_STATUS_META[item].label}
+                    {LEAD_KIND_OPTIONS.map((option) => (
+                      <SelectItem key={option.value} value={option.value}>
+                        {option.label}
                       </SelectItem>
                     ))}
                   </SelectContent>
                 </Select>
                 <p className="text-xs text-muted-foreground">
-                  “Deliverable” means the domain accepts mail — not that the individual mailbox
-                  exists.
+                  {LEAD_KIND_OPTIONS.find((o) => o.value === kind)?.description}
                 </p>
               </div>
 
               <div className="space-y-2">
-                <Label htmlFor="exportWhatsapp">WhatsApp</Label>
-                <Select value={whatsappStatus} onValueChange={setWhatsappStatus}>
-                  <SelectTrigger id="exportWhatsapp">
+                <Label htmlFor="exportStatus">Status</Label>
+                <Select value={status} onValueChange={setStatus}>
+                  <SelectTrigger id="exportStatus">
                     <SelectValue />
                   </SelectTrigger>
                   <SelectContent>
-                    <SelectItem value={ANY}>Any WhatsApp status</SelectItem>
-                    {WHATSAPP_STATUSES.map((item) => (
-                      <SelectItem key={item} value={item}>
-                        {WHATSAPP_STATUS_META[item].label}
-                      </SelectItem>
-                    ))}
+                    <SelectItem value={ANY}>Any status</SelectItem>
+                    <SelectItem value="New">New</SelectItem>
+                    <SelectItem value="Enriched">Enriched</SelectItem>
+                    <SelectItem value="Partial">Partial</SelectItem>
+                    <SelectItem value="NoWebsite">No website</SelectItem>
+                    <SelectItem value="EnrichmentFailed">Enrich failed</SelectItem>
                   </SelectContent>
                 </Select>
               </div>
 
               <div className="space-y-2">
-                <Label htmlFor="exportRating">Minimum rating</Label>
+                <Label htmlFor="exportSearch">Search</Label>
                 <Input
-                  id="exportRating"
-                  type="number"
-                  min={0}
-                  max={5}
-                  step={0.1}
-                  placeholder="Any"
-                  value={minRating}
-                  onChange={(event) => setMinRating(event.target.value)}
+                  id="exportSearch"
+                  value={search}
+                  onChange={(event) => setSearch(event.target.value)}
+                  placeholder="Name, email, city…"
                 />
               </div>
-
-              <label className="flex cursor-pointer items-center gap-2 text-sm">
-                <Checkbox
-                  checked={hasEmail}
-                  onCheckedChange={(value) => setHasEmail(value === true)}
-                />
-                Only records with an email address
-              </label>
             </div>
 
             <Button
               className="w-full"
-              onClick={handleExport}
-              loading={createExport.isPending}
-              disabled={(stats.data?.total ?? 0) === 0}
+              onClick={() => void download()}
+              disabled={downloading || matching === 0 || preview.isPending}
             >
-              <Download />
-              Generate &amp; download
+              {downloading ? <Loader2 className="animate-spin" /> : <Download />}
+              {downloading
+                ? 'Preparing…'
+                : `Download ${formatNumber(matching)} lead(s)`}
             </Button>
 
-            {(stats.data?.total ?? 0) === 0 && (
-              <p className="text-center text-xs text-muted-foreground">
-                Nothing to export yet — run a search first.
-              </p>
+            {matching === 0 && !preview.isPending && (
+              <Alert variant="warning">
+                <TriangleAlert />
+                <AlertDescription>
+                  Nothing matches these filters, so there is nothing to export.
+                </AlertDescription>
+              </Alert>
             )}
           </CardContent>
         </Card>
 
         <Card>
           <CardHeader>
-            <CardTitle>Export history</CardTitle>
+            <CardTitle>Preview</CardTitle>
             <CardDescription>
-              Previously generated files, re-downloadable until they are deleted.
+              The first {PREVIEW_ROWS} rows of {formatNumber(matching)} that will be exported.
             </CardDescription>
           </CardHeader>
           <CardContent className="px-0 pb-0">
-            {exportsQuery.isError && (
+            {preview.isError && (
               <div className="px-5 pb-5">
                 <Alert variant="destructive">
-                  <AlertDescription>{exportsQuery.error.message}</AlertDescription>
+                  <AlertDescription>{preview.error.message}</AlertDescription>
                 </Alert>
               </div>
             )}
 
-            {exportsQuery.isPending ? (
+            {preview.isPending ? (
               <div className="space-y-2 px-5 pb-5">
-                {Array.from({ length: 4 }, (_, index) => (
-                  <Skeleton key={index} className="h-12 w-full" />
+                {Array.from({ length: 6 }, (_, index) => (
+                  <Skeleton key={index} className="h-10 w-full" />
                 ))}
               </div>
-            ) : records.length === 0 ? (
-              <div className="px-5 pb-5">
-                <EmptyState
-                  icon={<Package />}
-                  title="No exports yet"
-                  description="Generated files show up here so you can download them again."
-                />
-              </div>
+            ) : rows.length === 0 ? (
+              <p className="px-5 pb-5 text-sm text-muted-foreground">
+                No rows match the current filters.
+              </p>
             ) : (
               <TableContainer>
                 <Table>
                   <TableHeader>
                     <TableRow>
-                      <TableHead className="pl-5">File</TableHead>
-                      <TableHead>Rows</TableHead>
-                      <TableHead>Size</TableHead>
-                      <TableHead>Created</TableHead>
-                      <TableHead className="pr-5 text-right">Actions</TableHead>
+                      <TableHead className="pl-5">Business</TableHead>
+                      <TableHead>Email</TableHead>
+                      <TableHead>Phone</TableHead>
+                      <TableHead className="pr-5">Location</TableHead>
                     </TableRow>
                   </TableHeader>
                   <TableBody>
-                    {records.map((record) => (
-                      <TableRow key={record.id}>
+                    {rows.map((row) => (
+                      <TableRow key={row.id}>
                         <TableCell className="pl-5">
-                          <div className="flex items-center gap-2">
-                            {record.format === 'xlsx' ? (
-                              <FileSpreadsheet className="size-4 shrink-0 text-success" />
-                            ) : (
-                              <FileText className="size-4 shrink-0 text-muted-foreground" />
-                            )}
-                            <div className="min-w-0">
-                              <p className="max-w-[200px] truncate text-sm font-medium">
-                                {record.fileName}
-                              </p>
-                              <Badge variant="muted" className="mt-0.5">
-                                {record.template}
-                              </Badge>
-                            </div>
-                          </div>
+                          <p className="max-w-[180px] truncate text-sm font-medium">{row.name}</p>
+                          <p className="max-w-[180px] truncate text-xs text-muted-foreground">
+                            {row.category}
+                          </p>
                         </TableCell>
-                        <TableCell className="tabular-nums">
-                          {formatNumber(record.rowCount)}
+                        <TableCell className="max-w-[200px] truncate text-sm">
+                          {row.email || <span className="text-muted-foreground">—</span>}
                         </TableCell>
-                        <TableCell className="whitespace-nowrap text-xs text-muted-foreground">
-                          {formatBytes(record.byteSize)}
+                        <TableCell className="whitespace-nowrap text-sm">
+                          {row.phone || <span className="text-muted-foreground">—</span>}
                         </TableCell>
-                        <TableCell className="whitespace-nowrap text-xs text-muted-foreground">
-                          {formatDateTime(record.createdAt)}
-                        </TableCell>
-                        <TableCell className="pr-5">
-                          <div className="flex justify-end gap-1">
-                            <Button asChild variant="outline" size="icon-sm">
-                              <a href={`/api/exports/${record.id}`} download aria-label="Download">
-                                <Download />
-                              </a>
-                            </Button>
-                            <Button
-                              variant="ghost"
-                              size="icon-sm"
-                              aria-label="Delete export"
-                              onClick={() =>
-                                deleteExport.mutate(record.id, {
-                                  onSuccess: () => toast.success('Export deleted.'),
-                                  onError: (error) => toast.error(error.message),
-                                })
-                              }
-                            >
-                              <Trash2 />
-                            </Button>
-                          </div>
+                        <TableCell className="pr-5 text-sm text-muted-foreground">
+                          {[row.city, row.country].filter(Boolean).join(', ') || '—'}
                         </TableCell>
                       </TableRow>
                     ))}

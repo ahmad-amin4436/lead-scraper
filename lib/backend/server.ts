@@ -9,7 +9,7 @@ import { cookies } from 'next/headers';
 
 import { ok, fail } from '@/lib/api/response';
 import { backendBaseUrl } from '@/lib/backend/config';
-import type { BackendAuthResponse, BackendProblem } from '@/lib/backend/types';
+import type { BackendAuthResponse, BackendProblem, BackendUser } from '@/lib/backend/types';
 
 export const ACCESS_COOKIE = 'leadmine_access';
 export const REFRESH_COOKIE = 'leadmine_refresh';
@@ -194,4 +194,23 @@ export async function backendToApiResult(response: Response): Promise<Response> 
     status,
     problem?.errors,
   );
+}
+
+/**
+ * Resolves the signed-in user from the session cookie.
+ *
+ * Used where a route needs the caller's identity rather than just proxying a
+ * request — starting a search records the owner so the background worker, which
+ * has no session of its own, can still attribute scraped leads correctly.
+ * Returns null when the session is missing or expired.
+ */
+export async function currentBackendUser(): Promise<BackendUser | null> {
+  try {
+    const { response } = await backendRequest('/api/auth/me');
+    if (!response.ok) return null;
+
+    return (await response.json()) as BackendUser;
+  } catch {
+    return null;
+  }
 }

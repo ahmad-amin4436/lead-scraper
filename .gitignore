@@ -69,3 +69,13 @@ backend/**/obj/
 # Visual Studio
 backend/.vs/
 **/*.csproj.user
+
+# ---------------------------------------------------------------------------
+# Environment files
+#
+# Real values (API keys, the scraper service key) must never be committed.
+# .env.example is the template and carries no secrets.
+# ---------------------------------------------------------------------------
+.env
+.env.*
+!.env.example

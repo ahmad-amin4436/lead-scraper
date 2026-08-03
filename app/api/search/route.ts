@@ -1,6 +1,7 @@
 import { headers } from 'next/headers';
 
-import { handle, ok, parseJson } from '@/lib/api/response';
+import { fail, handle, ok, parseJson } from '@/lib/api/response';
+import { currentBackendUser } from '@/lib/backend/server';
 import { searchRequestSchema } from '@/lib/validation/search.schema';
 import { settingsRepository } from '@/repositories/settings.repository';
 import { jobManager } from '@/services/jobs/job-manager';
@@ -67,8 +68,15 @@ export function POST(request: Request): Promise<Response> {
     // Throws a 400 when an explicitly requested provider isn't configured.
     const provider = resolveProvider(input.provider, settings);
 
+    // Capture who is starting the run: the worker executes later with no
+    // session, and scraped leads must still be attributed to this user.
+    const owner = await currentBackendUser();
+    if (!owner) {
+      return fail('Sign in to start a search.', 'unauthorized', 401);
+    }
+
     const searchRequest: SearchRequest = { ...input, provider: provider.id };
-    const job = await jobManager.create(searchRequest);
+    const job = await jobManager.create(searchRequest, owner.id);
 
     await startRun(job.id);
 

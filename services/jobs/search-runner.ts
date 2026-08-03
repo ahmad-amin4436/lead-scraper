@@ -11,11 +11,13 @@ import type {
   ProviderBusiness,
   ResolvedLocation,
   SearchHistoryEntry,
+  SearchRequest,
 } from '@/types/search';
 import type { AppSettings } from '@/types/settings';
 import { RateLimiter, mapWithConcurrency, sleep } from '@/utils/async';
 import { createId } from '@/utils/id';
 import { enrichmentService } from '../enrichment/enrichment.service';
+import { ingestLeads, isLeadSinkConfigured } from '../leads/lead-sink';
 import { logger } from '../logging/logger.service';
 import { geocodingService } from '../search/geocoding.service';
 import type { ProviderContext, SearchProvider } from '../search/provider';
@@ -106,18 +108,48 @@ export async function runSearchJob(
 
   const pending: BusinessRecord[] = [];
 
+  /**
+   * Persists a batch.
+   *
+   * Leads go to SQL Server through the API's ingest endpoint. The local store is
+   * only used when no owner or service key is available — a dev run without the
+   * backend — so a misconfiguration degrades to "saved locally" rather than
+   * throwing scraped work away.
+   */
   const flushPending = async (): Promise<void> => {
     if (pending.length === 0) return;
     const batch = pending.splice(0, pending.length);
 
+    const owner = job.ownerUserId;
+    const useDatabase = Boolean(owner) && isLeadSinkConfigured();
+
     try {
-      const { inserted } = await businessRepository.insertMany(batch, false);
-      await businessRepository.flush();
-      job.addCount('saved', inserted.length);
-      await logger.debug('database.written', `Saved ${inserted.length} record(s)`, {
-        jobId: job.id,
-        context: { count: inserted.length },
-      });
+      if (useDatabase) {
+        const outcome = await ingestLeads(batch, {
+          ownerUserId: owner!,
+          searchJobId: job.id,
+          skipDuplicates: request.skipDuplicates,
+        });
+
+        job.addCount('saved', outcome.saved);
+        if (outcome.duplicates > 0) job.addCount('duplicates', outcome.duplicates);
+
+        await logger.debug(
+          'database.written',
+          `Saved ${outcome.saved} lead(s) to the database`,
+          { jobId: job.id, context: { saved: outcome.saved, duplicates: outcome.duplicates } },
+        );
+      } else {
+        const { inserted } = await businessRepository.insertMany(batch, false);
+        await businessRepository.flush();
+        job.addCount('saved', inserted.length);
+
+        await logger.warn(
+          'database.written',
+          `Saved ${inserted.length} record(s) to local storage — the database sink is not configured`,
+          { jobId: job.id, context: { count: inserted.length } },
+        );
+      }
     } catch (error) {
       job.addCount('failed', batch.length);
       await logger.error('search.failed', `Failed to save batch: ${toErrorMessage(error)}`, {
@@ -262,6 +294,14 @@ export async function runSearchJob(
       }
 
       for (const record of records) {
+        // Applied after enrichment, since that is what decides whether a lead
+        // has an email or a WhatsApp number. Filtering here rather than at read
+        // time means the database only fills with leads the user asked for.
+        if (!matchesLeadKind(record, request.leadKind)) {
+          job.addCount('skipped');
+          continue;
+        }
+
         pending.push(record);
         job.addResult({ ...record, duplicate: false } satisfies LiveResult);
       }
@@ -454,6 +494,36 @@ async function verifyRecords(
       );
     },
   );
+}
+
+/**
+ * Does this lead match the "kind" the user asked for?
+ *
+ * Mirrors `LeadKind` on the backend, so a run and a later database filter agree
+ * about what each option means.
+ */
+function matchesLeadKind(record: BusinessRecord, kind: SearchRequest['leadKind']): boolean {
+  switch (kind) {
+    case undefined:
+    case 'Any':
+      return true;
+    case 'New':
+      return record.status === 'new';
+    case 'Enriched':
+      return record.status === 'enriched';
+    case 'NoWebsite':
+      return record.status === 'no-website';
+    case 'Partial':
+      return record.status === 'partial';
+    case 'WhatsAppOnly':
+      return record.whatsappStatus === 'confirmed' || record.whatsappStatus === 'likely';
+    case 'EmailOnly':
+      return Boolean(record.email);
+    case 'DeliverableEmail':
+      return Boolean(record.email) && record.emailStatus === 'valid';
+    default:
+      return true;
+  }
 }
 
 async function recordHistory(job: Job): Promise<void> {

@@ -56,7 +56,7 @@ function isStale(record: JobRecord): boolean {
  * the stream/poll 404, where an in-memory Map lived in a single process.
  */
 class JobManager {
-  async create(request: SearchRequest): Promise<Job> {
+  async create(request: SearchRequest, ownerUserId?: string | null): Promise<Job> {
     // One active run at a time: concurrent jobs would contend on the same lead
     // store and blow through provider rate limits. Also serialises the single
     // writer so blob read-modify-write stays safe.
@@ -70,7 +70,7 @@ class JobManager {
     }
 
     await this.sweep();
-    return Job.create(createId('job'), request);
+    return Job.create(createId('job'), request, ownerUserId);
   }
 
   async find(jobId: string): Promise<Job | null> {

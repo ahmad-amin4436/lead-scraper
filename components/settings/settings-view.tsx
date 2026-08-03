@@ -3,11 +3,10 @@
 import * as React from 'react';
 import { Controller, useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
-import { CheckCircle2, Eye, EyeOff, KeyRound, Lock, Save, ShieldCheck, TriangleAlert } from 'lucide-react';
+import { Save, ShieldCheck, TriangleAlert } from 'lucide-react';
 import { toast } from 'sonner';
 
 import { PageHeader } from '@/components/shared/page-header';
-import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
@@ -108,7 +107,6 @@ function toFormValues(data: SettingsResponse): SettingsInput {
 export function SettingsView() {
   const query = useSettings();
   const update = useUpdateSettings();
-  const [showKey, setShowKey] = React.useState(false);
 
   return (
     <>
@@ -131,8 +129,6 @@ export function SettingsView() {
       ) : (
         <SettingsForm
           data={query.data}
-          showKey={showKey}
-          onToggleKey={() => setShowKey((current) => !current)}
           submitting={update.isPending}
           onSubmit={(values) =>
             update.mutate(values, {
@@ -148,13 +144,11 @@ export function SettingsView() {
 
 interface SettingsFormProps {
   data: SettingsResponse;
-  showKey: boolean;
-  onToggleKey: () => void;
   submitting: boolean;
   onSubmit: (values: SettingsInput) => void;
 }
 
-function SettingsForm({ data, showKey, onToggleKey, submitting, onSubmit }: SettingsFormProps) {
+function SettingsForm({ data, submitting, onSubmit }: SettingsFormProps) {
   const { settings, providers } = data;
 
   const {
@@ -169,100 +163,6 @@ function SettingsForm({ data, showKey, onToggleKey, submitting, onSubmit }: Sett
 
   return (
     <form onSubmit={handleSubmit(onSubmit)} className="space-y-6">
-      <Card>
-        <CardHeader>
-          <CardTitle className="flex items-center gap-2">
-            <KeyRound className="size-4" />
-            API keys
-          </CardTitle>
-          <CardDescription>
-            Google Places unlocks ratings, review counts and richer address data. Without a key,
-            LeadMine falls back to OpenStreetMap, which needs no credentials.
-          </CardDescription>
-        </CardHeader>
-        <CardContent className="space-y-5">
-          <div className="space-y-2">
-            <div className="flex flex-wrap items-center gap-2">
-              <Label htmlFor="googleApiKey">Google Places API key</Label>
-              {settings.googleApiKeyConfigured ? (
-                <Badge variant="success">
-                  <CheckCircle2 />
-                  Configured
-                </Badge>
-              ) : (
-                <Badge variant="muted">Not set</Badge>
-              )}
-              {settings.googleApiKeyFromEnv && (
-                <Badge variant="warning">
-                  <Lock />
-                  Set by environment variable
-                </Badge>
-              )}
-            </div>
-
-            <div className="flex gap-2">
-              <Input
-                id="googleApiKey"
-                type={showKey ? 'text' : 'password'}
-                autoComplete="off"
-                spellCheck={false}
-                placeholder={
-                  settings.googleApiKeyConfigured
-                    ? `${settings.googleApiKeyMasked} — leave blank to keep`
-                    : 'Paste your API key'
-                }
-                disabled={settings.googleApiKeyFromEnv}
-                {...register('googleApiKey')}
-              />
-              <Button
-                type="button"
-                variant="outline"
-                size="icon"
-                onClick={onToggleKey}
-                disabled={settings.googleApiKeyFromEnv}
-                aria-label={showKey ? 'Hide API key' : 'Show API key'}
-              >
-                {showKey ? <EyeOff /> : <Eye />}
-              </Button>
-            </div>
-
-            <p className="text-xs text-muted-foreground">
-              {settings.googleApiKeyFromEnv
-                ? 'GOOGLE_PLACES_API_KEY is set in the environment and takes precedence over anything entered here.'
-                : 'Stored in your local settings file and never sent back to the browser.'}
-            </p>
-            {errors.googleApiKey && (
-              <p className="text-xs text-destructive">{errors.googleApiKey.message}</p>
-            )}
-          </div>
-
-          <Separator />
-
-          <div className="space-y-2">
-            <Label>Provider status</Label>
-            <div className="grid gap-2 sm:grid-cols-2">
-              {providers.map((provider) => (
-                <div
-                  key={provider.id}
-                  className="flex items-start gap-2 rounded-lg border border-border p-3"
-                >
-                  {provider.ready ? (
-                    <CheckCircle2 className="mt-0.5 size-4 shrink-0 text-success" />
-                  ) : (
-                    <TriangleAlert className="mt-0.5 size-4 shrink-0 text-warning" />
-                  )}
-                  <div className="min-w-0">
-                    <p className="text-sm font-medium">{provider.label}</p>
-                    <p className="text-xs text-muted-foreground">
-                      {provider.reason ?? 'Ready to use'}
-                    </p>
-                  </div>
-                </div>
-              ))}
-            </div>
-          </div>
-        </CardContent>
-      </Card>
 
       <Card>
         <CardHeader>

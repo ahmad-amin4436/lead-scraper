@@ -22,6 +22,15 @@ export interface BackendBusinessQuery {
   city?: string;
   source?: string;
   status?: string;
+  emailStatus?: string;
+  whatsappStatus?: string;
+  /** Coarse lead-quality preset; mirrors `LeadKind` on the backend. */
+  kind?: string;
+  /** Admin-only; ignored for callers without `leads.view-all`. */
+  ownerUserId?: string;
+  hasEmail?: boolean;
+  hasPhone?: boolean;
+  hasWebsite?: boolean;
   minRating?: number;
   page?: number;
   pageSize?: number;

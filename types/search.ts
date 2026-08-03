@@ -19,6 +19,19 @@ export interface SearchRequest {
   maxResults: number;
   enrichContacts: boolean;
   skipDuplicates: boolean;
+  /**
+   * Which quality of lead to keep. Applied while the run is in flight, so the
+   * database is not filled with rows the user already said they don't want.
+   */
+  leadKind?:
+    | 'Any'
+    | 'New'
+    | 'Enriched'
+    | 'NoWebsite'
+    | 'Partial'
+    | 'WhatsAppOnly'
+    | 'EmailOnly'
+    | 'DeliverableEmail';
   minRating?: number;
   minReviews?: number;
   provider?: BusinessSource;

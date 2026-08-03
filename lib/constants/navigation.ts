@@ -1,11 +1,13 @@
 import {
-  Building2,
   Database,
   Download,
   FileClock,
   LayoutDashboard,
+  Mail,
+  MailCheck,
   ScrollText,
   Search,
+  Send,
   Settings,
   ShieldCheck,
   Users,
@@ -19,6 +21,12 @@ export interface NavItem {
   description: string;
   /** Marks the item as backend/admin territory, grouped under its own heading. */
   section?: 'admin';
+  /**
+   * Permission required to see the item. Undefined means everyone signed in.
+   * The sidebar hides what the user cannot use, and the API enforces the same
+   * rule — hiding a link is presentation, not access control.
+   */
+  permission?: string;
 }
 
 export const NAV_ITEMS: NavItem[] = [
@@ -33,43 +41,74 @@ export const NAV_ITEMS: NavItem[] = [
     label: 'Search Businesses',
     icon: Search,
     description: 'Discover and enrich new leads',
+    permission: 'searches.create',
   },
   {
     href: '/database',
-    label: 'Excel Database',
+    label: 'Leads',
     icon: Database,
-    description: 'Browse and manage saved leads',
+    // Renamed from "Excel Database": leads live in SQL Server now, and Excel is
+    // only ever an export format.
+    description: 'Your saved leads from the database',
+    permission: 'leads.view',
+  },
+  {
+    href: '/email/compose',
+    label: 'Send Email',
+    icon: Send,
+    description: 'Email leads using an approved preset',
+    permission: 'email.send',
+  },
+  {
+    href: '/email/history',
+    label: 'Email History',
+    icon: MailCheck,
+    description: 'What was sent, to whom and when',
+    permission: 'email.view-own-log',
   },
   {
     href: '/history',
     label: 'Search History',
     icon: FileClock,
     description: 'Past runs, with one-click rerun',
+    permission: 'searches.view',
   },
   {
     href: '/export',
     label: 'Export',
     icon: Download,
     description: 'Excel, CSV and CRM-ready files',
+    permission: 'leads.export',
   },
   {
     href: '/logs',
     label: 'Logs',
     icon: ScrollText,
     description: 'Run-by-run activity trail',
+    permission: 'system.view-logs',
   },
   {
     href: '/settings',
     label: 'Settings',
     icon: Settings,
-    description: 'API keys, limits and crawler behaviour',
+    description: 'Limits and crawler behaviour',
+    permission: 'settings.view',
   },
   {
-    href: '/admin/leads',
-    label: 'Leads',
-    icon: Building2,
-    description: 'Backend business database',
+    href: '/admin/email-templates',
+    label: 'Email Presets',
+    icon: Mail,
+    description: 'Templates and signatures users send from',
     section: 'admin',
+    permission: 'email.manage-templates',
+  },
+  {
+    href: '/admin/email-log',
+    label: 'All Email Activity',
+    icon: MailCheck,
+    description: 'Every user’s sends, filterable by date',
+    section: 'admin',
+    permission: 'email.view-all-logs',
   },
   {
     href: '/admin/users',
@@ -77,6 +116,7 @@ export const NAV_ITEMS: NavItem[] = [
     icon: Users,
     description: 'Accounts, roles and access',
     section: 'admin',
+    permission: 'users.view',
   },
   {
     href: '/admin/roles',
@@ -84,5 +124,6 @@ export const NAV_ITEMS: NavItem[] = [
     icon: ShieldCheck,
     description: 'Permissions matrix',
     section: 'admin',
+    permission: 'roles.view',
   },
 ];

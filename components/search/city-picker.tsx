@@ -5,12 +5,12 @@ import { MapPin, Plus, X } from 'lucide-react';
 
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
-import { Input } from '@/components/ui/input';
-import { getCities } from '@/lib/constants/locations';
+import { Combobox } from '@/components/ui/combobox';
+import { getCityOptions } from '@/lib/constants/geo';
 
 interface CityPickerProps {
-  countryCode: string;
-  regionName?: string;
+  countryCode: string | null;
+  stateCode: string | null;
   value: string[];
   onChange: (next: string[]) => void;
   max?: number;
@@ -18,13 +18,15 @@ interface CityPickerProps {
 }
 
 /**
- * Cities can be picked from the curated list for the selected country/region or
- * typed freely — anything entered is geocoded server-side, so unlisted towns
- * work just as well.
+ * Adds cities from the ISO dataset for the chosen country/region.
+ *
+ * The list narrows as the user picks a region, but a free-text fallback stays
+ * available: the dataset is comprehensive rather than complete, and a missing
+ * town should never block a search — anything typed is geocoded server-side.
  */
 export function CityPicker({
   countryCode,
-  regionName,
+  stateCode,
   value,
   onChange,
   max = 25,
@@ -32,11 +34,11 @@ export function CityPicker({
 }: CityPickerProps) {
   const [draft, setDraft] = React.useState('');
 
-  const suggestions = React.useMemo(() => {
-    const all = getCities(countryCode, regionName);
+  const options = React.useMemo(() => {
+    const all = getCityOptions(countryCode, stateCode);
     const chosen = new Set(value.map((city) => city.toLowerCase()));
-    return all.filter((city) => !chosen.has(city.toLowerCase())).slice(0, 14);
-  }, [countryCode, regionName, value]);
+    return all.filter((option) => !chosen.has(option.label.toLowerCase()));
+  }, [countryCode, stateCode, value]);
 
   const add = (city: string): void => {
     const trimmed = city.trim();
@@ -51,33 +53,49 @@ export function CityPicker({
     onChange(value.filter((item) => item !== city));
   };
 
+  const atCapacity = value.length >= max;
+
   return (
     <div className="space-y-3">
-      <div className="flex gap-2">
-        <Input
-          value={draft}
-          onChange={(event) => setDraft(event.target.value)}
-          onKeyDown={(event) => {
-            // Enter adds a city without submitting the surrounding form.
-            if (event.key === 'Enter') {
-              event.preventDefault();
-              add(draft);
-            }
-          }}
-          placeholder="Type a city and press Enter"
-          disabled={disabled || value.length >= max}
-          aria-label="Add a city"
+      <div className="grid gap-2 sm:grid-cols-[minmax(0,1fr)_minmax(0,1fr)]">
+        <Combobox
+          options={options}
+          value={null}
+          onChange={(next) => next && add(next)}
+          placeholder={countryCode ? 'Pick a city from the list' : 'Choose a country first'}
+          searchPlaceholder="Search cities…"
+          emptyMessage="No matching city — type it below instead."
+          disabled={disabled || !countryCode || atCapacity}
+          aria-label="Pick a city"
         />
-        <Button
-          type="button"
-          variant="outline"
-          size="icon"
-          onClick={() => add(draft)}
-          disabled={disabled || !draft.trim() || value.length >= max}
-          aria-label="Add city"
-        >
-          <Plus />
-        </Button>
+
+        <div className="flex gap-2">
+          <input
+            value={draft}
+            onChange={(event) => setDraft(event.target.value)}
+            onKeyDown={(event) => {
+              // Enter adds without submitting the surrounding form.
+              if (event.key === 'Enter') {
+                event.preventDefault();
+                add(draft);
+              }
+            }}
+            placeholder="…or type any city"
+            disabled={disabled || atCapacity}
+            aria-label="Type a city"
+            className="flex h-9 w-full rounded-md border border-input bg-background px-3 py-1 text-sm shadow-sm placeholder:text-muted-foreground focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/25 focus-visible:outline-none disabled:cursor-not-allowed disabled:opacity-50"
+          />
+          <Button
+            type="button"
+            variant="outline"
+            size="icon"
+            onClick={() => add(draft)}
+            disabled={disabled || !draft.trim() || atCapacity}
+            aria-label="Add city"
+          >
+            <Plus />
+          </Button>
+        </div>
       </div>
 
       {value.length > 0 && (
@@ -100,28 +118,9 @@ export function CityPicker({
         </div>
       )}
 
-      {suggestions.length > 0 && value.length < max && (
-        <div className="space-y-1.5">
-          <p className="text-xs text-muted-foreground">Quick add</p>
-          <div className="flex flex-wrap gap-1.5">
-            {suggestions.map((city) => (
-              <button
-                key={city}
-                type="button"
-                onClick={() => add(city)}
-                disabled={disabled}
-                className="rounded-full border border-dashed border-border px-2.5 py-0.5 text-xs text-muted-foreground transition-colors hover:border-primary hover:text-primary disabled:opacity-50"
-              >
-                + {city}
-              </button>
-            ))}
-          </div>
-        </div>
-      )}
-
       <p className="text-xs text-muted-foreground">
-        {value.length} / {max} cities. Any city worldwide works — it doesn&apos;t need to be in the
-        list.
+        {value.length} / {max} cities
+        {options.length > 0 && ` · ${options.length.toLocaleString()} available here`}
       </p>
     </div>
   );

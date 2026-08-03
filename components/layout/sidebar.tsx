@@ -5,6 +5,7 @@ import { usePathname } from 'next/navigation';
 import { Gem, LogIn, LogOut } from 'lucide-react';
 
 import { useAuth } from '@/components/providers/auth-provider';
+import { hasPermission } from '@/hooks/use-auth';
 import { Button } from '@/components/ui/button';
 import { NAV_ITEMS } from '@/lib/constants/navigation';
 import { cn } from '@/lib/utils';
@@ -18,8 +19,15 @@ export function SidebarContent({ onNavigate }: SidebarProps) {
   const pathname = usePathname();
   const { user, signOut } = useAuth();
 
-  const adminItems = NAV_ITEMS.filter((item) => item.section === 'admin');
-  const mainItems = NAV_ITEMS.filter((item) => item.section !== 'admin');
+  // Hide what the caller cannot use. This is presentation only — every route is
+  // independently enforced by the API, so a hidden link is not a security
+  // boundary, just a tidier menu.
+  const visible = NAV_ITEMS.filter(
+    (item) => !item.permission || hasPermission(user, item.permission),
+  );
+
+  const adminItems = visible.filter((item) => item.section === 'admin');
+  const mainItems = visible.filter((item) => item.section !== 'admin');
 
   const renderItems = (items: typeof NAV_ITEMS) =>
     items.map((item) => {
