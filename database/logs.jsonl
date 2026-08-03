@@ -14015,5 +14015,19 @@
       "duplicates": 2,
       "enriched": 0
     }
+  },
+  {
+    "id": "log_msdf2yrm245dacbe",
+    "timestamp": "2026-08-03T16:01:48.419Z",
+    "level": "info",
+    "event": "settings.updated",
+    "message": "Settings updated",
+    "jobId": null,
+    "elapsedMs": null,
+    "context": {
+      "provider": "google-places",
+      "concurrency": 4,
+      "respectRobotsTxt": true
+    }
   }
 ]
