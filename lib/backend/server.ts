@@ -6,10 +6,30 @@
 // front end already speaks.
 
 import { cookies } from 'next/headers';
+import { Agent } from 'undici';
 
 import { ok, fail } from '@/lib/api/response';
 import { backendBaseUrl } from '@/lib/backend/config';
 import type { BackendAuthResponse, BackendProblem, BackendUser } from '@/lib/backend/types';
+
+/**
+ * Skips TLS certificate validation for calls to the backend — nothing else.
+ * <p>
+ * Node's `fetch` has no "proceed anyway" the way a browser does: an untrusted
+ * certificate (e.g. a hosting panel's self-signed default before a real one is
+ * issued) fails the request outright. Set LEADMINE_API_INSECURE_SSL=true as a
+ * temporary workaround while that certificate is unresolved, and unset it the
+ * moment a trusted one is installed — this intentionally does not touch
+ * NODE_TLS_REJECT_UNAUTHORIZED, which would silently disable verification for
+ * every outbound HTTPS call this process makes, not just the backend.
+ */
+export const insecureDispatcher =
+  process.env.LEADMINE_API_INSECURE_SSL === 'true'
+    ? new Agent({ connect: { rejectUnauthorized: false } })
+    : undefined;
+
+/** `fetch`'s standard types don't know about undici's `dispatcher` option. */
+export type FetchInit = RequestInit & { dispatcher?: Agent };
 
 export const ACCESS_COOKIE = 'leadmine_access';
 export const REFRESH_COOKIE = 'leadmine_refresh';
@@ -97,7 +117,8 @@ export async function backendRequest(
       },
       body: init.body ?? null,
       cache: 'no-store',
-    });
+      ...(insecureDispatcher ? { dispatcher: insecureDispatcher } : {}),
+    } satisfies FetchInit);
 
   const first = await perform(init.skipAuth ? undefined : accessToken);
 
@@ -122,7 +143,8 @@ async function rotateSession(refreshToken: string): Promise<BackendAuthResponse 
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ refreshToken }),
       cache: 'no-store',
-    });
+      ...(insecureDispatcher ? { dispatcher: insecureDispatcher } : {}),
+    } satisfies FetchInit);
     if (!response.ok) return null;
 
     const body = (await response.json()) as BackendAuthResponse;

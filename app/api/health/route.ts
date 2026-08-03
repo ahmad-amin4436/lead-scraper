@@ -1,5 +1,6 @@
 import { handle, ok } from '@/lib/api/response';
 import { backendBaseUrl } from '@/lib/backend/config';
+import { insecureDispatcher, type FetchInit } from '@/lib/backend/server';
 import { blobStore } from '@/lib/storage/blob-store';
 import { businessRepository } from '@/repositories/business.repository';
 import { settingsRepository } from '@/repositories/settings.repository';
@@ -21,7 +22,10 @@ export function GET(): Promise<Response> {
 
     let backend: 'ok' | 'unreachable' = 'unreachable';
     try {
-      const response = await fetch(`${backendBaseUrl()}/api/health`, { cache: 'no-store' });
+      const response = await fetch(`${backendBaseUrl()}/api/health`, {
+        cache: 'no-store',
+        ...(insecureDispatcher ? { dispatcher: insecureDispatcher } : {}),
+      } satisfies FetchInit);
       if (response.ok) backend = 'ok';
     } catch {
       // Left as unreachable — this endpoint reports status, it does not fail on it.
