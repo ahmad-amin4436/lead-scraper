@@ -1,89 +1,60 @@
-import { headers } from 'next/headers';
-
 import { fail, handle, ok, parseJson } from '@/lib/api/response';
-import { currentBackendUser } from '@/lib/backend/server';
+import {
+  toCreateJobRequest,
+  toJobSnapshot,
+  type BackendSearchJob,
+} from '@/lib/backend/search-mapper';
+import { backendRequest, problemMessage } from '@/lib/backend/server';
+import type { BackendProblem } from '@/lib/backend/types';
 import { searchRequestSchema } from '@/lib/validation/search.schema';
-import { settingsRepository } from '@/repositories/settings.repository';
-import { jobManager } from '@/services/jobs/job-manager';
-import { runQueuedJob } from '@/services/jobs/run-queued-job';
-import { resolveProvider } from '@/services/search/provider-registry';
 import type { SearchRequest } from '@/types/search';
 
 export const dynamic = 'force-dynamic';
 
 /**
- * Attempts to hand the run to the Netlify Background Function.
+ * Queues a search run.
  *
- * Returns true only on a `202 Accepted`, which is what a background function
- * replies with when it has taken ownership of the work. Anything else — a 404
- * because we are not on Netlify, or a network error — means nobody picked it up.
- *
- * This probes the capability instead of reading `process.env.NETLIFY`, which is
- * set at build time but NOT inside the Next.js function runtime. That mismatch
- * meant production believed it was running locally: the search executed inline
- * in the request handler and was killed by the function timeout part-way
- * through, leaving the job stranded.
+ * Queuing only writes a row; the scraper inside the .NET API claims it and
+ * executes it. Nothing runs in this Next.js process, which is what lets the
+ * browser close, the page navigate away, or this front end redeploy without
+ * affecting a sweep in progress.
  */
-async function triggerBackgroundFunction(jobId: string): Promise<boolean> {
-  const host = (await headers()).get('host');
-  if (!host) return false;
-
-  const proto = host.startsWith('localhost') || host.startsWith('127.') ? 'http' : 'https';
-  const url = `${proto}://${host}/.netlify/functions/run-search-background`;
-
-  try {
-    const response = await fetch(url, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ jobId }),
-    });
-    return response.status === 202;
-  } catch (error) {
-    console.warn('[api/search] background function unreachable:', error);
-    return false;
-  }
-}
-
-/**
- * Starts the search run.
- *
- * Preferred path is the Background Function (up to 15 minutes). When that isn't
- * available — `next dev`, `next start`, a container — the run executes in-process
- * fire-and-forget, which is safe on a long-lived host.
- */
-async function startRun(jobId: string): Promise<void> {
-  if (await triggerBackgroundFunction(jobId)) return;
-
-  void runQueuedJob(jobId).catch((error: unknown) => {
-    console.error('[api/search] inline job runner crashed:', error);
-  });
-}
-
-/** Starts a search run and returns immediately with the job snapshot. */
 export function POST(request: Request): Promise<Response> {
   return handle(async () => {
     const input = await parseJson(request, searchRequestSchema);
-    const settings = await settingsRepository.get();
+    const searchRequest = input as SearchRequest;
 
-    // Throws a 400 when an explicitly requested provider isn't configured.
-    const provider = resolveProvider(input.provider, settings);
+    const { response } = await backendRequest('/api/searches', {
+      method: 'POST',
+      body: JSON.stringify(toCreateJobRequest(searchRequest)),
+    });
 
-    // Capture who is starting the run: the worker executes later with no
-    // session, and scraped leads must still be attributed to this user.
-    const owner = await currentBackendUser();
-    if (!owner) {
-      return fail('Sign in to start a search.', 'unauthorized', 401);
+    if (!response.ok) {
+      const problem = (await response.json().catch(() => null)) as BackendProblem | null;
+      const status = problem?.status ?? response.status;
+
+      return fail(
+        problemMessage(problem, 'Could not start the search.'),
+        status === 409 ? 'conflict' : 'backend_error',
+        status,
+      );
     }
 
-    const searchRequest: SearchRequest = { ...input, provider: provider.id };
-    const job = await jobManager.create(searchRequest, owner.id);
-
-    await startRun(job.id);
-
-    return ok(job.snapshot, { status: 202 });
+    const job = (await response.json()) as BackendSearchJob;
+    return ok(toJobSnapshot(job), { status: 202 });
   });
 }
 
+/** Runs that are queued, running or stopping — the caller's own. */
 export function GET(): Promise<Response> {
-  return handle(async () => ok(await jobManager.list()));
+  return handle(async () => {
+    const { response } = await backendRequest('/api/searches/active');
+
+    if (!response.ok) {
+      return fail('Could not load active searches.', 'backend_error', response.status);
+    }
+
+    const jobs = (await response.json()) as BackendSearchJob[];
+    return ok(jobs.map(toJobSnapshot));
+  });
 }

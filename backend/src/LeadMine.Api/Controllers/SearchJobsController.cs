@@ -68,6 +68,25 @@ public sealed class SearchJobsController(ISearchJobService jobs) : ApiController
     [ProducesResponseType(typeof(SearchJobDto), StatusCodes.Status200OK)]
     public async Task<ActionResult<SearchJobDto>> Stop(Guid id, CancellationToken ct)
         => FromResult(await jobs.RequestStopAsync(id, ct));
+
+    /// <summary>Removes one finished run from history. Active runs must be stopped first.</summary>
+    [HttpDelete("{id:guid}")]
+    [HasPermission(Permissions.Searches.Delete)]
+    [ProducesResponseType(StatusCodes.Status204NoContent)]
+    [ProducesResponseType(StatusCodes.Status404NotFound)]
+    [ProducesResponseType(StatusCodes.Status409Conflict)]
+    public async Task<IActionResult> Delete(Guid id, CancellationToken ct)
+    {
+        var result = await jobs.DeleteAsync(id, ct);
+        return result.Succeeded ? NoContent() : Problem(result);
+    }
+
+    /// <summary>Clears every finished run the caller can see.</summary>
+    [HttpDelete]
+    [HasPermission(Permissions.Searches.Delete)]
+    [ProducesResponseType(typeof(int), StatusCodes.Status200OK)]
+    public async Task<ActionResult<int>> Clear(CancellationToken ct)
+        => FromResult(await jobs.ClearHistoryAsync(ct));
 }
 
 /// <summary>

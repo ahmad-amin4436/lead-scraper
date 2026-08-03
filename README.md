@@ -218,59 +218,53 @@ with `= + - @` to prevent formula injection when the file is opened in a spreads
 
 ## Deployment
 
-### Netlify — supported
+Two pieces, deployed separately:
 
-The app is built to run on Netlify's serverless platform. All state persists to
-**Netlify Blobs** and long searches run in a **Background Function**, so no persistent
-disk or long-lived process is needed.
+| Piece | Runs on | Holds |
+| --- | --- | --- |
+| **Next.js front end** | Netlify (or any Node host) | Nothing. Renders the UI and proxies to the API. |
+| **.NET 8 API** | A .NET application host + SQL Server | Leads, users, search runs — and the scraper. |
 
-- **Storage** — leads, settings, history, exports and logs are JSON documents in Netlify
-  Blobs; generated `.xlsx`/`.csv` export files are stored there too. Blobs is durable and
-  shared across every function instance.
-- **Search execution** — `POST /api/search` starts a job and triggers the background
-  function (`netlify/functions/run-search-background`), which runs the sweep for up to 15
-  minutes and writes progress back to the job's blob.
-- **Live progress** — the browser polls `GET /api/search/[jobId]` (there is no SSE). Runs
-  can be **stopped**; the worker checks a stop flag in the job blob at each checkpoint.
+### The scraper runs inside the .NET API
 
-Just connect the repo — `netlify.toml` and `@netlify/plugin-nextjs` handle the rest.
-Blobs authentication is automatic inside Netlify Functions; nothing to configure.
+There is no worker process, container or VPS to operate. Searching is a hosted
+`BackgroundService` in the API: `POST /api/searches` writes a queued row, the worker claims
+it under a lease, and progress is checkpointed per (city × category) task.
 
-> **The 15-minute ceiling.** A background function is capped at ~15 minutes. A very large
-> sweep can be cut off; partial results are saved as the run progresses, so nothing found
-> is lost, but the run may finish incomplete.
+That design is what makes a restart survivable. If the app pool recycles mid-sweep, the lease
+lapses, a reaper returns the job to the queue, and the next instance **resumes from the last
+checkpoint** instead of re-scraping. See [backend/README.md](backend/README.md#the-scraper)
+for the settings and the app-host checklist — the short version is **turn Always On on**, or a
+queued run waits until the next request wakes the process.
 
-### Container / VPS
+### Front end on Netlify
 
-Also runs on any long-lived Node host. There, storage falls back to the local filesystem
-under `LEADMINE_DATA_DIR` and the search runs in-process (no background function needed).
-
-```bash
-npm run build
-LEADMINE_DATA_DIR=/data npm start
-```
-
-Mount a persistent volume at `/data`. Any container platform, VPS, Fly.io, Render or
-Railway works.
+Connect the repo; `netlify.toml` and `@netlify/plugin-nextjs` handle the build. Set
+`BACKEND_API_URL` to the deployed API. Route handlers attach the caller's bearer token from an
+httpOnly cookie and forward — no search work happens in a Netlify function, so the 15-minute
+background-function ceiling no longer applies to anything.
 
 ---
 
 ## Configuration
 
-Settings live in the UI (**Settings**) and persist to `database/settings.json`.
+Scraper behaviour is configured on the API, under the `Scraper` section — see
+[backend/README.md](backend/README.md#settings) for the full table.
 
-| Setting                | Default | Notes                                            |
-| ---------------------- | ------- | ------------------------------------------------ |
-| Concurrency            | 4       | Parallel website fetches during enrichment       |
-| Delay between requests | 400 ms  | A site's own `Crawl-delay` wins if longer        |
-| Provider rate limit    | 120/min | Keeps you inside API quota                       |
-| Retry attempts         | 3       | Exponential backoff with jitter                  |
-| Request timeout        | 15 s    | Per HTTP request                                 |
-| Max pages per site     | 4       | Homepage + contact/about pages                   |
-| Respect robots.txt     | on      | Leave on unless you own the sites being crawled  |
+| Setting | Default | Notes |
+| --- | --- | --- |
+| `EnrichmentConcurrency` | 4 | Parallel website fetches during enrichment |
+| `DelayMs` | 400 ms | A site's own `Crawl-delay` wins if longer |
+| `RateLimitPerMinute` | 120 | Keeps you inside provider quota |
+| `RetryAttempts` | 3 | Exponential backoff with jitter |
+| `RequestTimeoutMs` | 15 s | Per HTTP request |
+| `MaxPagesPerSite` | 4 | Homepage + contact/about pages |
+| `RespectRobotsTxt` | on | Leave on unless you own the sites being crawled |
+| `CrawlerContactEmail` | — | Advertised in the User-Agent so site owners can reach you |
 
-`GOOGLE_PLACES_API_KEY` in the environment overrides the stored key and makes the UI field
-read-only — the right setup for production.
+`Scraper:GoogleApiKey` is a secret: supply it via user-secrets or the
+`Scraper__GoogleApiKey` environment variable. Leave it empty to run on OpenStreetMap, which
+needs no key.
 
 ---
 

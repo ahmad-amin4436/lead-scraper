@@ -5,6 +5,10 @@ using LeadMine.Infrastructure.Authorization;
 using LeadMine.Infrastructure.Email;
 using LeadMine.Infrastructure.Identity;
 using LeadMine.Infrastructure.Persistence;
+using LeadMine.Infrastructure.Scraping;
+using LeadMine.Infrastructure.Scraping.Enrichment;
+using LeadMine.Infrastructure.Scraping.Providers;
+using LeadMine.Infrastructure.Scraping.Verification;
 using LeadMine.Infrastructure.Services;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.AspNetCore.Authorization;
@@ -150,9 +154,79 @@ public static class DependencyInjection
         services.AddScoped<ISearchJobService, SearchJobService>();
 
         // Recovers jobs whose worker died. Hosted in the API because that is the
-        // process guaranteed to be running — in the worker it would die with the
-        // very failure it exists to recover from.
+        // process guaranteed to be running — in a separate worker it would die
+        // with the very failure it exists to recover from.
         services.AddHostedService<StaleJobReaperService>();
+
+        services.AddScraping(configuration);
+
+        return services;
+    }
+
+    /// <summary>
+    /// Registers the scraping engine and the in-process worker that runs it.
+    /// <para>
+    /// The scraper lives inside the API because the deployment target is a .NET
+    /// application host — there is no second process to put it in. Everything
+    /// here is therefore sized to share the machine with request handling.
+    /// </para>
+    /// </summary>
+    private static IServiceCollection AddScraping(
+        this IServiceCollection services,
+        IConfiguration configuration)
+    {
+        services.AddOptions<ScraperOptions>()
+            .Bind(configuration.GetSection(ScraperOptions.SectionName))
+            .ValidateDataAnnotations()
+            .ValidateOnStart();
+
+        var scraper = configuration.GetSection(ScraperOptions.SectionName).Get<ScraperOptions>()
+            ?? new ScraperOptions();
+
+        // Calls to search providers. The timeout is sized for the slowest of
+        // them — a loaded Overpass mirror — because HttpClient.Timeout is a hard
+        // per-client ceiling. Quicker providers narrow it per request.
+        services.AddHttpClient(ScraperHttpClients.Provider, client =>
+        {
+            client.Timeout = ScraperHttpClients.ProviderClientTimeout;
+            client.DefaultRequestHeaders.UserAgent.ParseAdd(scraper.UserAgent);
+            client.DefaultRequestHeaders.Accept.ParseAdd("application/json");
+        });
+
+        // Crawling business websites. Redirects are capped and compression is on:
+        // this client follows links found in untrusted pages.
+        services.AddHttpClient(ScraperHttpClients.Crawler, client =>
+            {
+                client.Timeout = TimeSpan.FromMilliseconds(scraper.RequestTimeoutMs);
+                client.DefaultRequestHeaders.UserAgent.ParseAdd(scraper.UserAgent);
+                client.DefaultRequestHeaders.Accept.ParseAdd("text/html,application/xhtml+xml");
+            })
+            .ConfigurePrimaryHttpMessageHandler(() => new HttpClientHandler
+            {
+                AllowAutoRedirect = true,
+                MaxAutomaticRedirections = 4,
+                AutomaticDecompression = System.Net.DecompressionMethods.All,
+                // Business sites are frequently misconfigured. A bad certificate
+                // is a reason to skip a lead, not to trust it — so validation
+                // stays on and the fetch simply fails.
+                UseCookies = false,
+            });
+
+        services.AddSingleton<GooglePlacesProvider>();
+        services.AddSingleton<OpenStreetMapProvider>();
+        services.AddSingleton<ProviderRegistry>();
+        services.AddSingleton<GeocodingService>();
+
+        services.AddSingleton<RobotsCache>();
+        services.AddSingleton<EnrichmentService>();
+        services.AddSingleton<EmailVerifier>();
+        services.AddSingleton<VerificationService>();
+
+        // Scoped: the runner opens its own short-lived scopes for database work,
+        // so it must not outlive the scope the worker resolves it from.
+        services.AddScoped<SearchRunner>();
+
+        services.AddHostedService<ScraperWorkerService>();
 
         return services;
     }

@@ -1,9 +1,12 @@
 # Netlify configuration for LeadMine AI.
 #
-# The app is serverless-ready: all data (leads, settings, history, exports, logs,
-# and job state) persists to Netlify Blobs, and long searches run in a Background
-# Function (up to 15 minutes) with the browser polling for live progress. No
-# persistent volume or long-lived process is required.
+# This deploys the front end only. Leads, users and search runs live in the .NET
+# API, which also runs the scraper as an in-process background service — so there
+# is no Background Function here and no 15-minute ceiling to work around. Set
+# BACKEND_API_URL to the deployed API.
+#
+# Settings, exports and logs still persist to Netlify Blobs, so no persistent
+# volume is required for the front end either.
 #
 # See the Deployment section of README.md.
 

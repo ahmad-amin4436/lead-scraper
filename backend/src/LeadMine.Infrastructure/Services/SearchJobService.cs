@@ -23,6 +23,12 @@ public interface ISearchJobService
 
     Task<Result<SearchJobDto>> RequestStopAsync(Guid id, CancellationToken ct = default);
 
+    /// <summary>Removes one finished run from the caller's history.</summary>
+    Task<Result> DeleteAsync(Guid id, CancellationToken ct = default);
+
+    /// <summary>Clears the caller's finished runs. Returns how many were removed.</summary>
+    Task<Result<int>> ClearHistoryAsync(CancellationToken ct = default);
+
     // --- worker protocol ---
 
     Task<ClaimedJobDto?> ClaimNextAsync(ClaimJobRequest request, CancellationToken ct = default);
@@ -157,6 +163,49 @@ public sealed class SearchJobService(
 
         await db.SaveChangesAsync(ct);
         return Result<SearchJobDto>.Success(Map(job));
+    }
+
+    /// <summary>
+    /// Removes a finished run from history.
+    /// <para>
+    /// Only finished runs: deleting a live one would leave a worker heartbeating
+    /// against a row that has vanished from every query, and its leads would
+    /// still be arriving. Stop it first.
+    /// </para>
+    /// </summary>
+    public async Task<Result> DeleteAsync(Guid id, CancellationToken ct = default)
+    {
+        var job = await ScopeToCaller(db.SearchJobs).FirstOrDefaultAsync(j => j.Id == id, ct);
+        if (job is null) return Result.NotFound("Search run not found.");
+
+        if (!IsTerminal(job.Status))
+        {
+            return Result.Conflict("That run is still active. Stop it before deleting it.");
+        }
+
+        // Soft delete: SaveChanges turns Remove into IsDeleted = true, so the
+        // leads that reference this run keep a valid foreign key.
+        db.SearchJobs.Remove(job);
+        await db.SaveChangesAsync(ct);
+
+        return Result.Success();
+    }
+
+    public async Task<Result<int>> ClearHistoryAsync(CancellationToken ct = default)
+    {
+        var finished = await ScopeToCaller(db.SearchJobs)
+            .Where(j => j.Status == SearchJobStatus.Completed ||
+                        j.Status == SearchJobStatus.Failed ||
+                        j.Status == SearchJobStatus.Stopped)
+            .ToListAsync(ct);
+
+        if (finished.Count == 0) return Result<int>.Success(0);
+
+        db.SearchJobs.RemoveRange(finished);
+        await db.SaveChangesAsync(ct);
+
+        logger.LogInformation("Cleared {Count} finished run(s) from history", finished.Count);
+        return Result<int>.Success(finished.Count);
     }
 
     /// <summary>

@@ -13,9 +13,7 @@
     "lint": "eslint",
     "typecheck": "tsc --noEmit",
     "migrate:xlsx": "node scripts/migrate-xlsx-to-json.mjs",
-    "check": "npm run typecheck && npm run lint && npm run build",
-    "worker": "tsx --env-file=.env.local worker/index.ts",
-    "worker:prod": "tsx worker/index.ts"
+    "check": "npm run typecheck && npm run lint && npm run build"
   },
   "dependencies": {
     "@hookform/resolvers": "^5.5.7",

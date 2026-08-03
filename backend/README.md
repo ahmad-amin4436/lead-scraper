@@ -59,9 +59,88 @@ dotnet ef database update --project src/LeadMine.Infrastructure --startup-projec
 | `Seed:AdminEmail` | appsettings | Default `admin@leadmine.local`. |
 | `Seed:AdminPassword` | user-secrets / env | **No admin is created if unset** — a default here would be a published credential. |
 | `Cors:AllowedOrigins` | appsettings | Defaults to the Next.js dev origin. |
+| `Scraper:GoogleApiKey` | user-secrets / env | Optional. Empty ⇒ OpenStreetMap only, which needs no key. |
+| `Scraper:*` | appsettings | Scraper tuning — see [The scraper](#the-scraper). |
 
 `appsettings.json` intentionally contains **no secrets**. In production supply them as
-environment variables (`ConnectionStrings__DefaultConnection`, `Jwt__Key`, …).
+environment variables (`ConnectionStrings__DefaultConnection`, `Jwt__Key`,
+`Scraper__GoogleApiKey`, …).
+
+---
+
+## The scraper
+
+The scraper runs **inside this API**, as a hosted `BackgroundService`. There is no separate
+worker process, container or VPS: the deployment target is a .NET application host, so
+anything that cannot run in-process cannot run at all.
+
+```
+POST /api/searches ──▶ SearchJobs row (Queued)
+                            │
+      ScraperWorkerService ──┤ claims it (lease + owner)
+                            │
+                     SearchRunner
+                       ├─ geocode each city        (Google, else Nominatim)
+                       ├─ per (city × category):
+                       │    ├─ provider search     (Google Places / Overpass)
+                       │    ├─ enrich websites     (robots.txt, contact pages)
+                       │    ├─ verify              (MX lookup, phone line type)
+                       │    ├─ save batch          ──▶ Businesses
+                       │    └─ checkpoint task key ──▶ SearchJobs
+                       └─ report Completed / Failed / Stopped
+```
+
+### Why this survives a restart
+
+Queuing a run only writes a row, and every task is checkpointed as it finishes. So an app-pool
+recycle, a deploy or a crash mid-sweep leaves a job that is still `Running` with a lease nobody
+is renewing. `StaleJobReaperService` (every 30 s) returns it to `Queued`, a worker re-claims it,
+and `SearchRunner` **skips the task keys already recorded** — it resumes rather than restarts.
+A job that keeps dying is failed after five attempts rather than occupying the queue forever.
+
+Host shutdown is handled separately from a crash: the runner leaves the job non-terminal on
+`SIGTERM` instead of reporting a status, so a routine restart does not turn into a failed run.
+
+### Settings
+
+| Setting | Default | Notes |
+| --- | --- | --- |
+| `WorkerEnabled` | `true` | Set `false` on instances that should only serve HTTP. |
+| `Concurrency` | `1` | Runs executed at once. This process also serves requests. |
+| `LeaseSeconds` | `120` | Lower ⇒ faster recovery after a recycle; higher ⇒ tolerates slower tasks. |
+| `EnrichmentConcurrency` | `4` | Websites crawled in parallel. |
+| `DelayMs` | `400` | Pause between requests to the same host. |
+| `RateLimitPerMinute` | `120` | Cap on provider calls, to stay inside quota. |
+| `MaxPagesPerSite` | `4` | Homepage plus linked contact/about pages. |
+| `RespectRobotsTxt` | `true` | Leave on unless you own the sites being crawled. |
+| `CrawlerContactEmail` | — | Advertised in the User-Agent so site owners can reach you. |
+| `SaveBatchSize` | `25` | Leads buffered before a write. |
+
+### Deploying to an application host
+
+- **Enable Always On** (or your host's equivalent). The worker is a `BackgroundService`: if the
+  host idles the process out, queued runs simply wait until the next request wakes it. Nothing
+  is lost — the reaper and the checkpoint make that safe — but a run can stall for as long as
+  the app stays cold.
+- **Two instances behind a load balancer is supported.** Claims are leased per job with a
+  guarded `UPDATE`, so exactly one worker runs a given search. Set `WorkerEnabled: false` if you
+  would rather keep scraping off a particular instance.
+- **Outbound HTTPS must be allowed** to the search providers and to arbitrary business websites.
+  The crawler resolves every hostname and refuses private, loopback, link-local and
+  cloud-metadata addresses before connecting — it runs in the same process as the API and on the
+  same network as the database, so SSRF is a real risk rather than a theoretical one.
+- **Google Places is optional.** With no key the app runs on OpenStreetMap, which needs none but
+  carries no ratings or review counts (so the rating/review filters do nothing there). Community
+  Overpass mirrors also throttle heavy use: a task that fails for that reason is checkpointed and
+  the sweep continues.
+
+### What the crawler will not do
+
+It fetches the homepage and a few linked contact/about pages over plain HTTP, reads what the
+site already publishes to an anonymous visitor, and stops. It honours robots.txt, identifies
+itself, paces requests, and never authenticates, submits a form, or works around any access
+control. A page behind a login is simply not read. Only publicly listed contact details are
+stored.
 
 ---
 
@@ -173,6 +252,7 @@ Enforced server-side, not just hidden in a UI:
 | Roles | CRUD, `PUT {id}/permissions` |
 | Permissions | `GET /api/permissions`, `GET /api/permissions/mine` |
 | Leads | query/filter/page, stats, CRUD, `POST bulk-delete` |
+| Searches | `POST /api/searches`, `GET active`, `GET` (history), `GET {id}`, `POST {id}/stop`, `DELETE {id}`, `DELETE` (clear) |
 | Health | `GET /api/health` (anonymous) |
 
 Failures return RFC 7807 problem details. Exception detail is included **only outside
@@ -211,3 +291,15 @@ Exercised against SQL Server 2022 Express over real HTTP:
 - Refresh rotates; replaying the old token revokes the family (both tokens 401).
 - Duplicate lead → 409. Lead with no email → 201. Malformed email → 400.
 - Last-admin, self-delete and system-role guards all → 400.
+
+Scraper, against live OpenStreetMap and real business websites:
+
+- A two-category sweep of Bath returned 8 businesses, crawled their sites, and saved 8 leads
+  with 4 MX-verified addresses (`appointments@ba1hair.co.uk`, `reception@artizanbath.co.uk`, …).
+- **Crash recovery:** the API was hard-killed (`Stop-Process -Force`) 2 tasks into a 4-task run
+  holding 18 saved leads. On restart the reaper released the lease, the worker re-claimed the
+  job (`attempts=2`) and resumed at task 3 — final `4/4, 27 found, 25 saved, 2 duplicates`, with
+  the first two tasks never re-scraped.
+- Re-running an identical search saved 0 and reported the overlap as duplicates.
+- A run whose every task failed reports `Failed` with the provider error, not `Completed, 0
+  found` — the latter reads as "there are none there", which is a costlier wrong conclusion.
