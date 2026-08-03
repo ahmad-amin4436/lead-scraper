@@ -96,12 +96,12 @@ function LoginFormInner() {
           <Button type="submit" loading={isSubmitting}>
             Sign in
           </Button>
-          <p className="text-center text-sm text-muted-foreground">
+          {/* <p className="text-center text-sm text-muted-foreground">
             No account?{' '}
             <Link href="/register" className="text-primary underline-offset-4 hover:underline">
               Create one
             </Link>
-          </p>
+          </p> */}
         </CardFooter>
       </form>
     </Card>
