@@ -1,4 +1,6 @@
+using System.Reflection;
 using System.Text.Json.Serialization;
+using LeadMine.Api.Configuration;
 using LeadMine.Api.Middleware;
 using LeadMine.Infrastructure;
 using LeadMine.Infrastructure.Persistence;
@@ -44,6 +46,12 @@ builder.Services.Configure<ApiBehaviorOptions>(options =>
 
 builder.Services.AddInfrastructure(builder.Configuration);
 
+builder.Services.AddOptions<SwaggerOptions>()
+    .Bind(builder.Configuration.GetSection(SwaggerOptions.SectionName));
+
+var swaggerOptions = builder.Configuration.GetSection(SwaggerOptions.SectionName).Get<SwaggerOptions>()
+                     ?? new SwaggerOptions();
+
 builder.Services.AddEndpointsApiExplorer();
 builder.Services.AddSwaggerGen(options =>
 {
@@ -54,11 +62,19 @@ builder.Services.AddSwaggerGen(options =>
         Description = "Lead generation backend with role- and permission-based access control.",
     });
 
+    // Advertise the public base URL(s). Behind a reverse proxy the request URL
+    // the app sees is not the one the browser used, so without this "Try it out"
+    // would post to the wrong host.
+    foreach (var server in swaggerOptions.Servers.Where(s => !string.IsNullOrWhiteSpace(s.Url)))
+    {
+        options.AddServer(new OpenApiServer { Url = server.Url, Description = server.Description });
+    }
+
     // Lets Swagger UI send the bearer token, so the whole API is testable there.
     var scheme = new OpenApiSecurityScheme
     {
         Name = "Authorization",
-        Description = "Paste the JWT access token. The 'Bearer ' prefix is added for you.",
+        Description = "Paste the JWT access token from /api/auth/login. The 'Bearer ' prefix is added for you.",
         In = ParameterLocation.Header,
         Type = SecuritySchemeType.Http,
         Scheme = "bearer",
@@ -68,6 +84,20 @@ builder.Services.AddSwaggerGen(options =>
 
     options.AddSecurityDefinition("Bearer", scheme);
     options.AddSecurityRequirement(new OpenApiSecurityRequirement { [scheme] = Array.Empty<string>() });
+
+    // Surface the /// comments on controllers and DTOs in the document.
+    var xmlFiles = new[]
+    {
+        $"{Assembly.GetExecutingAssembly().GetName().Name}.xml",
+        "LeadMine.Application.xml",
+        "LeadMine.Domain.xml",
+    };
+
+    foreach (var xmlFile in xmlFiles)
+    {
+        var xmlPath = Path.Combine(AppContext.BaseDirectory, xmlFile);
+        if (File.Exists(xmlPath)) options.IncludeXmlComments(xmlPath, includeControllerXmlComments: true);
+    }
 });
 
 const string CorsPolicy = "LeadMineCors";
@@ -112,19 +142,40 @@ using (var scope = app.Services.CreateScope())
     }
 }
 
-if (app.Environment.IsDevelopment())
-{
-    app.UseSwagger();
-    app.UseSwaggerUI(options =>
-    {
-        options.SwaggerEndpoint("/swagger/v1/swagger.json", "LeadMine API v1");
-        options.DocumentTitle = "LeadMine API";
-    });
-}
-else
+if (!app.Environment.IsDevelopment())
 {
     app.UseHsts();
     app.UseHttpsRedirection();
+}
+
+// Swagger runs in every environment — a deployed API is where an explorable
+// contract is most useful. Outside Development the middleware below demands
+// HTTP Basic credentials first, and fails closed if none are configured.
+if (swaggerOptions.Enabled)
+{
+    var prefix = swaggerOptions.RoutePrefix.Trim('/');
+
+    app.UseMiddleware<SwaggerAuthenticationMiddleware>();
+
+    app.UseSwagger(options => options.RouteTemplate = $"{prefix}/{{documentName}}/swagger.json");
+
+    app.UseSwaggerUI(options =>
+    {
+        options.SwaggerEndpoint($"/{prefix}/v1/swagger.json", "LeadMine API v1");
+        options.RoutePrefix = prefix;
+        options.DocumentTitle = "LeadMine API";
+        // Collapsed by default: the full expansion is unreadable at this size.
+        options.DocExpansion(Swashbuckle.AspNetCore.SwaggerUI.DocExpansion.List);
+        options.DefaultModelsExpandDepth(0);
+        options.DisplayRequestDuration();
+        // Keeps the pasted bearer token across page reloads.
+        options.EnablePersistAuthorization();
+    });
+
+    app.Logger.LogInformation(
+        "Swagger UI at /{Prefix} (protected: {Protected})",
+        prefix,
+        !swaggerOptions.AllowsAnonymousAccess(app.Environment.IsDevelopment()));
 }
 
 app.UseCors(CorsPolicy);

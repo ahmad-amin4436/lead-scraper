@@ -33,6 +33,36 @@ public static class Permissions
 
         [PermissionDescription("Export leads to Excel or CSV")]
         public const string Export = "leads.export";
+
+        /// <summary>
+        /// Without this, every lead query is silently scoped to the caller's own
+        /// records. It is the single switch that separates a normal user from a
+        /// super admin for lead visibility.
+        /// </summary>
+        [PermissionDescription("See leads scraped by every user, not just your own")]
+        public const string ViewAll = "leads.view-all";
+    }
+
+    [PermissionGroup("Email")]
+    public static class Email
+    {
+        [PermissionDescription("Send emails to leads using an approved preset")]
+        public const string Send = "email.send";
+
+        [PermissionDescription("View email presets available to you")]
+        public const string ViewTemplates = "email.view-templates";
+
+        [PermissionDescription("Create, edit and retire email presets")]
+        public const string ManageTemplates = "email.manage-templates";
+
+        [PermissionDescription("Manage email signatures")]
+        public const string ManageSignatures = "email.manage-signatures";
+
+        [PermissionDescription("View your own sent-email history")]
+        public const string ViewOwnLog = "email.view-own-log";
+
+        [PermissionDescription("View every user's sent-email history")]
+        public const string ViewAllLogs = "email.view-all-logs";
     }
 
     [PermissionGroup("Searches")]

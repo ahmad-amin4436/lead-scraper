@@ -65,3 +65,7 @@ next-env.d.ts
 # .NET build output
 backend/**/bin/
 backend/**/obj/
+
+# Visual Studio
+backend/.vs/
+**/*.csproj.user

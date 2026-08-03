@@ -7,6 +7,8 @@ import { Toaster } from 'sonner';
 
 import { ApiClientError } from '@/lib/api-client';
 
+import { AuthProvider } from '@/components/providers/auth-provider';
+
 function createQueryClient(): QueryClient {
   return new QueryClient({
     defaultOptions: {
@@ -32,15 +34,17 @@ export function AppProviders({ children }: { children: React.ReactNode }) {
 
   return (
     <QueryClientProvider client={queryClient}>
-      <ThemeProvider attribute="class" defaultTheme="system" enableSystem disableTransitionOnChange>
-        {children}
-        <Toaster
-          position="bottom-right"
-          richColors
-          closeButton
-          toastOptions={{ duration: 5000 }}
-        />
-      </ThemeProvider>
+      <AuthProvider>
+        <ThemeProvider attribute="class" defaultTheme="system" enableSystem disableTransitionOnChange>
+          {children}
+          <Toaster
+            position="bottom-right"
+            richColors
+            closeButton
+            toastOptions={{ duration: 5000 }}
+          />
+        </ThemeProvider>
+      </AuthProvider>
     </QueryClientProvider>
   );
 }

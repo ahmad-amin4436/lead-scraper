@@ -1,4 +1,5 @@
 using System.Text.RegularExpressions;
+using LeadMine.Application.Authorization;
 using LeadMine.Application.Common;
 using LeadMine.Application.DTOs;
 using LeadMine.Application.Interfaces;
@@ -11,13 +12,56 @@ namespace LeadMine.Infrastructure.Services;
 
 public sealed partial class BusinessService(
     LeadMineDbContext db,
+    ICurrentUser currentUser,
     IAuditService audit) : IBusinessService
 {
+    /// <summary>
+    /// Restricts a lead query to what the caller is allowed to see.
+    /// <para>
+    /// This is the single chokepoint for tenant isolation: without
+    /// <c>leads.view-all</c> the caller only ever sees rows they own, and the
+    /// requested <c>OwnerUserId</c> is ignored rather than honoured — otherwise
+    /// anyone could read another user's pipeline by guessing an id.
+    /// </para>
+    /// </summary>
+    private IQueryable<Business> ScopeToCaller(IQueryable<Business> query, Guid? requestedOwner)
+    {
+        if (!currentUser.HasPermission(Permissions.Leads.ViewAll))
+        {
+            var me = currentUser.UserId;
+            return query.Where(b => b.OwnerUserId == me);
+        }
+
+        return requestedOwner.HasValue
+            ? query.Where(b => b.OwnerUserId == requestedOwner.Value)
+            : query;
+    }
+
+    /// <summary>
+    /// Applies the coarse "kind of lead" preset. Kept next to the enum's intent:
+    /// each case is the filter combination a user means when they pick it.
+    /// </summary>
+    private static IQueryable<Business> ApplyKind(IQueryable<Business> query, LeadKind? kind) => kind switch
+    {
+        null or LeadKind.Any => query,
+        LeadKind.New => query.Where(b => b.Status == BusinessStatus.New),
+        LeadKind.Enriched => query.Where(b => b.Status == BusinessStatus.Enriched),
+        LeadKind.NoWebsite => query.Where(b => b.Status == BusinessStatus.NoWebsite),
+        LeadKind.Partial => query.Where(b => b.Status == BusinessStatus.Partial),
+        LeadKind.WhatsAppOnly => query.Where(b =>
+            b.WhatsAppStatus == WhatsAppStatus.Confirmed || b.WhatsAppStatus == WhatsAppStatus.Likely),
+        LeadKind.EmailOnly => query.Where(b => b.Email != ""),
+        LeadKind.DeliverableEmail => query.Where(b => b.Email != "" && b.EmailStatus == EmailStatus.Valid),
+        _ => query,
+    };
+
     public async Task<PagedResult<BusinessDto>> QueryAsync(
         BusinessQueryRequest request,
         CancellationToken ct = default)
     {
-        var query = db.Businesses.AsNoTracking();
+        var query = ApplyKind(
+            ScopeToCaller(db.Businesses.AsNoTracking(), request.OwnerUserId),
+            request.Kind);
 
         if (!string.IsNullOrWhiteSpace(request.Search))
         {
@@ -93,7 +137,11 @@ public sealed partial class BusinessService(
 
     public async Task<Result<BusinessDto>> GetByIdAsync(Guid id, CancellationToken ct = default)
     {
-        var entity = await db.Businesses.AsNoTracking().FirstOrDefaultAsync(b => b.Id == id, ct);
+        // Scoped, so another user's lead reads as "not found" rather than
+        // confirming it exists.
+        var entity = await ScopeToCaller(db.Businesses.AsNoTracking(), null)
+            .FirstOrDefaultAsync(b => b.Id == id, ct);
+
         return entity is null
             ? Result<BusinessDto>.NotFound("Lead not found.")
             : Result<BusinessDto>.Success(Map(entity));
@@ -124,6 +172,8 @@ public sealed partial class BusinessService(
             Notes = request.Notes.Trim(),
             Source = request.Source,
             Status = string.IsNullOrWhiteSpace(request.Website) ? BusinessStatus.NoWebsite : BusinessStatus.New,
+            // Ownership is taken from the authenticated caller, never the payload.
+            OwnerUserId = currentUser.UserId,
         };
 
         ApplyDedupeKeys(entity);
@@ -149,7 +199,7 @@ public sealed partial class BusinessService(
         UpdateBusinessRequest request,
         CancellationToken ct = default)
     {
-        var entity = await db.Businesses.FirstOrDefaultAsync(b => b.Id == id, ct);
+        var entity = await ScopeToCaller(db.Businesses, null).FirstOrDefaultAsync(b => b.Id == id, ct);
         if (entity is null) return Result<BusinessDto>.NotFound("Lead not found.");
 
         if (request.Name is not null) entity.Name = request.Name.Trim();
@@ -175,7 +225,10 @@ public sealed partial class BusinessService(
     {
         if (ids.Count == 0) return Result<int>.Success(0);
 
-        var entities = await db.Businesses.Where(b => ids.Contains(b.Id)).ToListAsync(ct);
+        // Scoped: a delete can only ever touch rows the caller may see.
+        var entities = await ScopeToCaller(db.Businesses, null)
+            .Where(b => ids.Contains(b.Id))
+            .ToListAsync(ct);
 
         // Soft delete: SaveChanges converts Remove into IsDeleted = true.
         db.Businesses.RemoveRange(entities);
@@ -187,7 +240,8 @@ public sealed partial class BusinessService(
 
     public async Task<BusinessStatsDto> GetStatsAsync(CancellationToken ct = default)
     {
-        var query = db.Businesses.AsNoTracking();
+        // Dashboard numbers must match what the user can actually see.
+        var query = ScopeToCaller(db.Businesses.AsNoTracking(), null);
 
         // A single aggregate rather than one query per counter.
         var totals = await query
@@ -257,7 +311,13 @@ public sealed partial class BusinessService(
     /// </summary>
     private async Task<Business?> FindDuplicateAsync(Business candidate, CancellationToken ct)
     {
-        return await db.Businesses.FirstOrDefaultAsync(b =>
+        // Duplicates are per-owner: two users prospecting the same city should
+        // each get their own copy, not have the second one silently rejected.
+        var owner = candidate.OwnerUserId;
+
+        return await db.Businesses
+            .Where(b => b.OwnerUserId == owner)
+            .FirstOrDefaultAsync(b =>
             (candidate.DedupeWebsiteKey != null && b.DedupeWebsiteKey == candidate.DedupeWebsiteKey) ||
             (candidate.DedupePhoneKey != null && b.DedupePhoneKey == candidate.DedupePhoneKey) ||
             (candidate.DedupeNameKey != null && b.DedupeNameKey == candidate.DedupeNameKey), ct);

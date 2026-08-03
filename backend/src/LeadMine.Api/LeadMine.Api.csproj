@@ -5,6 +5,11 @@
     <Nullable>enable</Nullable>
     <ImplicitUsings>enable</ImplicitUsings>
     <UserSecretsId>e4f18de7-10fb-411c-a28e-f4eeab92395b</UserSecretsId>
+
+    <!-- Feeds the /// comments on controllers and DTOs into the OpenAPI document. -->
+    <GenerateDocumentationFile>true</GenerateDocumentationFile>
+    <!-- 1591: don't demand an XML comment on every public member. -->
+    <NoWarn>$(NoWarn);1591</NoWarn>
   </PropertyGroup>
 
   <ItemGroup>

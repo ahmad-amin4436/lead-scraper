@@ -80,28 +80,34 @@ public static class DbSeeder
             []),
 
         [RoleNames.Manager] = (
-            "Runs searches and manages the lead database, but cannot administer users or roles.",
+            "Runs searches and manages the lead database, and can see every user's leads and email history.",
             [
                 Permissions.Leads.View, Permissions.Leads.Create, Permissions.Leads.Update,
                 Permissions.Leads.Delete, Permissions.Leads.Verify, Permissions.Leads.Export,
+                // Team oversight without full user/role administration.
+                Permissions.Leads.ViewAll,
                 Permissions.Searches.View, Permissions.Searches.Create, Permissions.Searches.Stop,
                 Permissions.Searches.Delete,
                 Permissions.Settings.View,
                 Permissions.System.ViewLogs,
                 Permissions.Users.View,
+                Permissions.Email.Send, Permissions.Email.ViewTemplates,
+                Permissions.Email.ManageTemplates, Permissions.Email.ManageSignatures,
+                Permissions.Email.ViewOwnLog, Permissions.Email.ViewAllLogs,
             ]),
 
         [RoleNames.Analyst] = (
-            "Works the lead list and runs searches, without destructive actions.",
+            "Works their own leads and runs searches. Cannot see other users' data.",
             [
                 Permissions.Leads.View, Permissions.Leads.Create, Permissions.Leads.Update,
                 Permissions.Leads.Verify, Permissions.Leads.Export,
                 Permissions.Searches.View, Permissions.Searches.Create, Permissions.Searches.Stop,
                 Permissions.Settings.View,
+                Permissions.Email.Send, Permissions.Email.ViewTemplates, Permissions.Email.ViewOwnLog,
             ]),
 
         [RoleNames.Viewer] = (
-            "Read-only access to leads and search history.",
+            "Read-only access to their own leads and search history.",
             [
                 Permissions.Leads.View,
                 Permissions.Searches.View,

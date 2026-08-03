@@ -48,6 +48,11 @@ public class BusinessConfiguration : IEntityTypeConfiguration<Business>
         builder.HasIndex(b => b.WhatsAppStatus);
         builder.HasIndex(b => b.CreatedAt);
 
+        // Every lead query is scoped by owner, so this is the hottest index in
+        // the table; the composite matches the default "my leads, newest first".
+        builder.HasIndex(b => b.OwnerUserId);
+        builder.HasIndex(b => new { b.OwnerUserId, b.CreatedAt });
+
         // Duplicate detection: filtered so many NULLs don't bloat the index.
         builder.HasIndex(b => b.DedupeWebsiteKey).HasFilter("[DedupeWebsiteKey] IS NOT NULL");
         builder.HasIndex(b => b.DedupePhoneKey).HasFilter("[DedupePhoneKey] IS NOT NULL");

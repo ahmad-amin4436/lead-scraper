@@ -156,6 +156,15 @@ public sealed class BusinessQueryRequest
     public bool? HasPhone { get; set; }
     public bool? HasWebsite { get; set; }
 
+    /// <summary>
+    /// Admin-only. Restricts the list to one user's leads. Ignored — and the
+    /// caller forced to their own rows — without `leads.view-all`.
+    /// </summary>
+    public Guid? OwnerUserId { get; set; }
+
+    /// <summary>Coarse lead-quality preset; see <see cref="LeadKind"/>.</summary>
+    public LeadKind? Kind { get; set; }
+
     public string? SortBy { get; set; }
     public string? SortDir { get; set; }
 

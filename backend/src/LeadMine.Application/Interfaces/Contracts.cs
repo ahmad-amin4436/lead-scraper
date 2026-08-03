@@ -127,6 +127,45 @@ public interface IBusinessService
     Task<BusinessStatsDto> GetStatsAsync(CancellationToken ct = default);
 }
 
+/// <summary>Admin-managed email presets and signatures.</summary>
+public interface IEmailTemplateService
+{
+    Task<IReadOnlyList<EmailTemplateDto>> GetTemplatesAsync(bool activeOnly, CancellationToken ct = default);
+
+    Task<Result<EmailTemplateDto>> GetTemplateAsync(Guid id, CancellationToken ct = default);
+
+    Task<Result<EmailTemplateDto>> CreateTemplateAsync(CreateEmailTemplateRequest request, CancellationToken ct = default);
+
+    Task<Result<EmailTemplateDto>> UpdateTemplateAsync(Guid id, UpdateEmailTemplateRequest request, CancellationToken ct = default);
+
+    Task<Result> DeleteTemplateAsync(Guid id, CancellationToken ct = default);
+
+    Task<IReadOnlyList<EmailSignatureDto>> GetSignaturesAsync(Guid? ownerUserId, CancellationToken ct = default);
+
+    Task<Result<EmailSignatureDto>> SaveSignatureAsync(Guid? id, SaveEmailSignatureRequest request, CancellationToken ct = default);
+
+    Task<Result> DeleteSignatureAsync(Guid id, CancellationToken ct = default);
+}
+
+/// <summary>Renders and delivers preset-based email, and reports what was sent.</summary>
+public interface IEmailService
+{
+    Task<Result<SendEmailResultDto>> SendAsync(SendEmailRequest request, CancellationToken ct = default);
+
+    Task<Result<EmailPreviewDto>> PreviewAsync(EmailPreviewRequest request, CancellationToken ct = default);
+
+    /// <summary>
+    /// Sent-email history. Callers without `email.view-all-logs` are forced to
+    /// their own rows regardless of what they ask for.
+    /// </summary>
+    Task<PagedResult<EmailLogDto>> GetLogAsync(EmailLogQueryRequest request, CancellationToken ct = default);
+
+    Task<EmailStatsDto> GetStatsAsync(DateTimeOffset? from, DateTimeOffset? to, CancellationToken ct = default);
+
+    /// <summary>Verifies the SMTP credentials without sending to a real lead.</summary>
+    Task<Result> TestConnectionAsync(CancellationToken ct = default);
+}
+
 /// <summary>Writes the append-only security audit trail.</summary>
 public interface IAuditService
 {

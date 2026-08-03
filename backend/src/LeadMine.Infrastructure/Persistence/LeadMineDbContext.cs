@@ -34,6 +34,10 @@ public class LeadMineDbContext(
     public DbSet<AppSetting> AppSettings => Set<AppSetting>();
     public DbSet<AuditEntry> AuditEntries => Set<AuditEntry>();
 
+    public DbSet<EmailTemplate> EmailTemplates => Set<EmailTemplate>();
+    public DbSet<EmailSignature> EmailSignatures => Set<EmailSignature>();
+    public DbSet<EmailLog> EmailLogs => Set<EmailLog>();
+
     protected override void OnModelCreating(ModelBuilder builder)
     {
         base.OnModelCreating(builder);

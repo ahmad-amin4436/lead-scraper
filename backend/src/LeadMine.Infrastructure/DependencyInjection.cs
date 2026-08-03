@@ -2,6 +2,7 @@ using System.Text;
 using LeadMine.Application.Interfaces;
 using LeadMine.Domain.Identity;
 using LeadMine.Infrastructure.Authorization;
+using LeadMine.Infrastructure.Email;
 using LeadMine.Infrastructure.Identity;
 using LeadMine.Infrastructure.Persistence;
 using LeadMine.Infrastructure.Services;
@@ -138,6 +139,13 @@ public static class DependencyInjection
         services.AddScoped<IUserService, UserService>();
         services.AddScoped<IRoleService, RoleService>();
         services.AddScoped<IBusinessService, BusinessService>();
+
+        services.AddOptions<SmtpOptions>()
+            .Bind(configuration.GetSection(SmtpOptions.SectionName));
+
+        services.AddScoped<IEmailSender, SmtpEmailSender>();
+        services.AddScoped<IEmailTemplateService, EmailTemplateService>();
+        services.AddScoped<IEmailService, EmailService>();
 
         return services;
     }
