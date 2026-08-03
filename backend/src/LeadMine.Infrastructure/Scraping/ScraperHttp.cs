@@ -204,6 +204,18 @@ public static class ScraperConnect
     }
 }
 
+/// <summary>
+/// An HTTP 429 whose <c>Retry-After</c> the caller read before disposing the
+/// response. Carrying the wait time on the exception is what lets
+/// <see cref="ScraperRetry.ExecuteAsync{T}"/> honour the server's own stated
+/// cooldown instead of guessing one.
+/// </summary>
+public sealed class RateLimitedException(string message, TimeSpan? retryAfter)
+    : HttpRequestException(message, null, HttpStatusCode.TooManyRequests)
+{
+    public TimeSpan? RetryAfter { get; } = retryAfter;
+}
+
 /// <summary>Retry helpers shared by the scraper's outbound calls.</summary>
 public static class ScraperRetry
 {
@@ -214,12 +226,19 @@ public static class ScraperRetry
     /// 5xx. A 404 or a malformed request will fail identically on the next
     /// attempt, so retrying it just wastes the run's time budget.
     /// </para>
+    /// <para>
+    /// When <paramref name="rateLimiter"/> is supplied and the failure is a
+    /// <see cref="RateLimitedException"/>, the limiter is told to slow itself
+    /// down for every future call on this run — not just this one retry — and a
+    /// server-stated <c>Retry-After</c> wins over the guessed jitter delay.
+    /// </para>
     /// </summary>
     public static async Task<T> ExecuteAsync<T>(
         Func<int, Task<T>> action,
         int attempts,
         ILogger? logger = null,
-        CancellationToken ct = default)
+        CancellationToken ct = default,
+        RateLimiter? rateLimiter = null)
     {
         Exception? lastError = null;
 
@@ -227,7 +246,13 @@ public static class ScraperRetry
         {
             try
             {
-                return await action(attempt);
+                var result = await action(attempt);
+
+                // A success after an earlier penalty is evidence the wall has
+                // eased; let the limiter start easing off too.
+                if (attempt > 1 && rateLimiter is not null) await rateLimiter.NotifySuccessAsync(ct);
+
+                return result;
             }
             catch (OperationCanceledException) when (ct.IsCancellationRequested)
             {
@@ -237,10 +262,19 @@ public static class ScraperRetry
             {
                 lastError = ex;
 
-                if (attempt >= attempts) break;
+                TimeSpan delay;
 
-                var ceiling = Math.Min(15000, 500 * Math.Pow(2, attempt - 1));
-                var delay = TimeSpan.FromMilliseconds(Random.Shared.NextDouble() * ceiling);
+                if (ex is RateLimitedException rateLimited)
+                {
+                    if (rateLimiter is not null) await rateLimiter.NotifyRateLimitedAsync(rateLimited.RetryAfter, ct);
+                    delay = rateLimited.RetryAfter ?? JitterDelay(attempt);
+                }
+                else
+                {
+                    delay = JitterDelay(attempt);
+                }
+
+                if (attempt >= attempts) break;
 
                 logger?.LogDebug(
                     "Transient failure ({Message}); retrying in {Delay}ms",
@@ -251,6 +285,13 @@ public static class ScraperRetry
         }
 
         throw lastError ?? new InvalidOperationException("Retry failed without an exception.");
+    }
+
+    /// <summary>Exponential backoff with full jitter, capped at 15 seconds.</summary>
+    public static TimeSpan JitterDelay(int attempt)
+    {
+        var ceiling = Math.Min(15000, 500 * Math.Pow(2, attempt - 1));
+        return TimeSpan.FromMilliseconds(Random.Shared.NextDouble() * ceiling);
     }
 
     public static bool IsTransient(Exception ex) => ex switch
@@ -267,6 +308,22 @@ public static class ScraperRetry
     /// <summary>True when the status is worth another attempt.</summary>
     public static bool IsRetryableStatus(HttpStatusCode status) =>
         status == HttpStatusCode.TooManyRequests || (int)status >= 500;
+
+    /// <summary>
+    /// Reads <c>Retry-After</c> as either a delta-seconds or an HTTP-date value,
+    /// per RFC 9110 §10.2.3. Null when the header is absent or unparseable —
+    /// both are handled by falling back to a guessed delay.
+    /// </summary>
+    public static TimeSpan? ParseRetryAfter(HttpResponseMessage response)
+    {
+        var header = response.Headers.RetryAfter;
+        if (header is null) return null;
+
+        if (header.Delta is { } delta) return delta;
+        if (header.Date is { } date) return date - DateTimeOffset.UtcNow;
+
+        return null;
+    }
 }
 
 /// <summary>
@@ -275,14 +332,28 @@ public static class ScraperRetry
 /// Instance-per-run: two concurrent searches each get their own budget, which is
 /// the behaviour a per-provider quota actually implies.
 /// </para>
+/// <para>
+/// Adaptive: a 429 slows the limiter down beyond its configured rate, because a
+/// server that already said "too many" is telling us the configured rate is
+/// wrong for this window, not that we got unlucky once. A run that keeps
+/// succeeding gradually eases the penalty back off, so one bad patch does not
+/// throttle the rest of the run at the slowest rate it ever saw.
+/// </para>
 /// </summary>
 public sealed class RateLimiter(int requestsPerMinute)
 {
     private readonly TimeSpan _minInterval =
         TimeSpan.FromMilliseconds(60_000d / Math.Max(1, requestsPerMinute));
 
+    /// <summary>Ceiling on how much slower than configured the limiter will go.</summary>
+    private const double MaxPenaltyMultiplier = 8.0;
+
+    /// <summary>How much a success eases the penalty back toward 1x.</summary>
+    private const double PenaltyDecay = 0.85;
+
     private readonly SemaphoreSlim _gate = new(1, 1);
     private DateTimeOffset _nextSlot = DateTimeOffset.MinValue;
+    private double _penaltyMultiplier = 1.0;
 
     public async Task WaitAsync(CancellationToken ct = default)
     {
@@ -294,7 +365,7 @@ public sealed class RateLimiter(int requestsPerMinute)
             var now = DateTimeOffset.UtcNow;
             var runAt = now > _nextSlot ? now : _nextSlot;
             delay = runAt - now;
-            _nextSlot = runAt + _minInterval;
+            _nextSlot = runAt + ScaledInterval();
         }
         finally
         {
@@ -303,4 +374,46 @@ public sealed class RateLimiter(int requestsPerMinute)
 
         if (delay > TimeSpan.Zero) await Task.Delay(delay, ct);
     }
+
+    /// <summary>
+    /// Reports a 429 so every subsequent call in this run backs off, not just
+    /// the one being retried. A server-stated <paramref name="retryAfter"/> is
+    /// better evidence than a guess, so it wins when the next slot is computed.
+    /// </summary>
+    public async Task NotifyRateLimitedAsync(TimeSpan? retryAfter, CancellationToken ct = default)
+    {
+        await _gate.WaitAsync(ct);
+        try
+        {
+            _penaltyMultiplier = Math.Min(MaxPenaltyMultiplier, _penaltyMultiplier * 2);
+
+            var now = DateTimeOffset.UtcNow;
+            var candidate = now + (retryAfter ?? ScaledInterval());
+            if (candidate > _nextSlot) _nextSlot = candidate;
+        }
+        finally
+        {
+            _gate.Release();
+        }
+    }
+
+    /// <summary>Eases a standing penalty after a call succeeds.</summary>
+    public async Task NotifySuccessAsync(CancellationToken ct = default)
+    {
+        if (_penaltyMultiplier <= 1.0) return;
+
+        await _gate.WaitAsync(ct);
+        try
+        {
+            _penaltyMultiplier = Math.Max(1.0, _penaltyMultiplier * PenaltyDecay);
+        }
+        finally
+        {
+            _gate.Release();
+        }
+    }
+
+    /// <summary>Caller must already hold <see cref="_gate"/>.</summary>
+    private TimeSpan ScaledInterval() =>
+        TimeSpan.FromMilliseconds(_minInterval.TotalMilliseconds * _penaltyMultiplier);
 }

@@ -113,6 +113,18 @@ public sealed class SearchRunner(
             return;
         }
 
+        // Once true, a Google quota failure has already downgraded this run to
+        // OpenStreetMap for good — no point trying Google again this attempt.
+        var switchedToOpenStreetMap = false;
+
+        // Builds the query for the current loop iteration; declared once so the
+        // primary attempt and the post-fallback retry construct it identically.
+        Task<IReadOnlyList<ProviderBusiness>> SearchTaskAsync(SearchTask t, ResolvedLocation loc) =>
+            provider.SearchAsync(
+                new ProviderQuery(t.Category, t.CategoryLabel, loc, state.Payload.RadiusMeters, state.Payload.MaxResults),
+                state.ProviderContext,
+                ct);
+
         var tasks = state.Payload.EnumerateTasks()
             .Select(t => new SearchTask(t.Key, t.City, t.Category, CategoryCatalog.Resolve(t.Category).Label))
             .ToList();
@@ -159,16 +171,7 @@ public sealed class SearchRunner(
 
             try
             {
-                businesses = await provider.SearchAsync(
-                    new ProviderQuery(
-                        task.Category,
-                        task.CategoryLabel,
-                        location,
-                        state.Payload.RadiusMeters,
-                        state.Payload.MaxResults),
-                    state.ProviderContext,
-                    ct);
-
+                businesses = await SearchTaskAsync(task, location);
                 state.Found += businesses.Count;
             }
             catch (OperationCanceledException) when (ct.IsCancellationRequested)
@@ -182,6 +185,43 @@ public sealed class SearchRunner(
                 await FlushAsync(state, stoppingToken);
                 await CompleteAsync(state.JobId, state.WorkerId, SearchJobStatus.Failed, ex.Message, stoppingToken);
                 return;
+            }
+            catch (ProviderException ex) when (ex.Failure == ProviderFailure.QuotaExceeded && !switchedToOpenStreetMap)
+            {
+                // A billed provider running dry does not mean the free,
+                // unmetered one is also out of road. Switch once for the rest
+                // of the sweep, and retry this same task immediately on the new
+                // provider rather than letting the switch itself cost a task.
+                switchedToOpenStreetMap = true;
+                provider = providers.Select(ProviderRegistry.OpenStreetMapId, state.ProviderContext);
+
+                logger.LogWarning(
+                    ex, "Google Places quota exhausted on job {JobId}; switching to OpenStreetMap for the rest of the run",
+                    state.JobId);
+
+                state.CurrentTask = "Google Places quota exceeded — switching to OpenStreetMap";
+                await BeatAsync(state, abort, null, stoppingToken);
+
+                try
+                {
+                    businesses = await SearchTaskAsync(task, location);
+                    state.Found += businesses.Count;
+                }
+                catch (OperationCanceledException) when (ct.IsCancellationRequested)
+                {
+                    break;
+                }
+                catch (Exception retryEx)
+                {
+                    state.Failed++;
+                    state.TasksFailed++;
+                    state.LastTaskError = retryEx.Message;
+
+                    logger.LogWarning(retryEx, "Task {Key} failed on the OpenStreetMap fallback too", task.Key);
+
+                    await BeatAsync(state, abort, task.Key, stoppingToken);
+                    continue;
+                }
             }
             catch (Exception ex)
             {

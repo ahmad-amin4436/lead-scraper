@@ -14,6 +14,17 @@ public enum ProviderFailure
 
     /// <summary>The provider has no mapping for the requested category.</summary>
     UnsupportedCategory = 3,
+
+    /// <summary>
+    /// The provider's quota is exhausted for the current window (HTTP 429).
+    /// <para>
+    /// Not <see cref="IsFatal"/>: a billed provider running dry does not mean
+    /// the free, unmetered ones are also out of road. The runner treats this as
+    /// a signal to switch the rest of the sweep onto OpenStreetMap rather than
+    /// aborting or retrying against a wall that has not had time to reset.
+    /// </para>
+    /// </summary>
+    QuotaExceeded = 4,
 }
 
 /// <summary>

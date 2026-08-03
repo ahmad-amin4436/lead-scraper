@@ -137,6 +137,17 @@ Host shutdown is handled separately from a crash: the runner leaves the job non-
   Nominatim, which permits one request per second — a 25-city sweep then spends 25 seconds just
   locating. The run still works; it is only slower. The fallback is logged as a warning naming
   the returned status, so a key restricted to the wrong API does not fail silently.
+- **A Google 429 does not fail the run.** `RateLimiter` backs off adaptively (doubling on every
+  429, honouring a server-sent `Retry-After` over its own guess, easing back off after a
+  success), and a quota that stays exhausted after the configured retry attempts switches the
+  rest of that run to OpenStreetMap — the task that hit the wall is retried immediately on the
+  new provider rather than being lost. This matters most for the Places (New) free tier's
+  default quota, which is a **daily** cap (100 `SearchTextRequest` calls/day on a fresh project):
+  once it is spent, retrying within the run cannot help, so the fallback is the only thing that
+  keeps the run productive until the quota resets. There is deliberately no scraping of Google
+  Maps' web UI as an alternative data source — Google's Terms of Service prohibit it, it would
+  need a headless browser this deployment target cannot run, and it would fight the same
+  anti-bot defenses that make it unreliable at any real volume.
 
 ### Outbound connections
 
@@ -323,3 +334,8 @@ Scraper, against live OpenStreetMap and real business websites:
   `Stopping → Stopped` with the lease released.
 - Google Places: a Bath law-firm sweep with `minRating: 4.0` returned 8 leads carrying ratings,
   review counts and E.164 phone numbers, 6 of them enriched with MX-verified addresses.
+- **429 fallback:** with the project's daily Places quota genuinely exhausted (confirmed via a
+  direct call — `RESOURCE_EXHAUSTED` / `SearchTextRequestPerDayPerProject`), a two-task Google
+  run hit 429 on the first task, retried 3 times (~4 s total), switched to OpenStreetMap, and
+  **completed both tasks** — the interrupted task recovered its 6 results on the fallback rather
+  than being dropped, and the run reported `Completed` with no error, not `Failed`.

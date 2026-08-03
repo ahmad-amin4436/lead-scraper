@@ -87,33 +87,61 @@ public sealed class GooglePlacesProvider(
             // shared provider client carries.
             using var deadline = ScraperHttpClients.Deadline(context.Options.RequestTimeoutMs, ct);
 
-            using var response = await ScraperRetry.ExecuteAsync(
-                async _ =>
-                {
-                    using var request = new HttpRequestMessage(HttpMethod.Post, SearchTextUrl)
+            HttpResponseMessage response;
+
+            try
+            {
+                response = await ScraperRetry.ExecuteAsync(
+                    async _ =>
                     {
-                        Content = JsonContent.Create(body, options: JsonOptions),
-                    };
+                        using var request = new HttpRequestMessage(HttpMethod.Post, SearchTextUrl)
+                        {
+                            Content = JsonContent.Create(body, options: JsonOptions),
+                        };
 
-                    request.Headers.TryAddWithoutValidation("X-Goog-Api-Key", context.GoogleApiKey);
-                    request.Headers.TryAddWithoutValidation("X-Goog-FieldMask", FieldMask);
+                        request.Headers.TryAddWithoutValidation("X-Goog-Api-Key", context.GoogleApiKey);
+                        request.Headers.TryAddWithoutValidation("X-Goog-FieldMask", FieldMask);
 
-                    var result = await client.SendAsync(request, deadline.Token);
+                        var result = await client.SendAsync(request, deadline.Token);
 
-                    // Surface retryable statuses as exceptions so the retry helper
-                    // sees them; anything else is decided below.
-                    if (ScraperRetry.IsRetryableStatus(result.StatusCode))
-                    {
-                        result.Dispose();
-                        throw new HttpRequestException(
-                            $"Google Places returned {(int)result.StatusCode}", null, result.StatusCode);
-                    }
+                        // 429 gets its own exception type so the retry helper can
+                        // read the quota back off, not just count it as one more
+                        // generic transient failure.
+                        if (result.StatusCode == HttpStatusCode.TooManyRequests)
+                        {
+                            var retryAfter = ScraperRetry.ParseRetryAfter(result);
+                            result.Dispose();
+                            throw new RateLimitedException("Google Places returned 429", retryAfter);
+                        }
 
-                    return result;
-                },
-                context.Options.RetryAttempts,
-                logger,
-                ct);
+                        // Surface other retryable statuses as exceptions so the
+                        // retry helper sees them; anything else is decided below.
+                        if (ScraperRetry.IsRetryableStatus(result.StatusCode))
+                        {
+                            result.Dispose();
+                            throw new HttpRequestException(
+                                $"Google Places returned {(int)result.StatusCode}", null, result.StatusCode);
+                        }
+
+                        return result;
+                    },
+                    context.Options.RetryAttempts,
+                    logger,
+                    ct,
+                    context.RateLimiter);
+            }
+            catch (RateLimitedException ex)
+            {
+                // Distinct from every other failure: a billed provider running
+                // dry does not mean OpenStreetMap is also out of road, so this
+                // is worth the caller falling back rather than aborting.
+                throw new ProviderException(
+                    "Google Places rate limit exceeded for this project's current quota.",
+                    ProviderFailure.QuotaExceeded,
+                    ex);
+            }
+
+            using var responseScope = response;
 
             if (response.StatusCode is HttpStatusCode.Unauthorized or HttpStatusCode.Forbidden)
             {
