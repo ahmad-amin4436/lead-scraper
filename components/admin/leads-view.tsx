@@ -276,6 +276,21 @@ export function BackendLeadsView() {
     });
   }
 
+  const allOnPageSelected = rows.length > 0 && rows.every((row) => selected.has(row.id));
+  const someOnPageSelected = rows.some((row) => selected.has(row.id));
+
+  function toggleAllOnPage() {
+    setSelected((current) => {
+      const next = new Set(current);
+      if (allOnPageSelected) {
+        for (const row of rows) next.delete(row.id);
+      } else {
+        for (const row of rows) next.add(row.id);
+      }
+      return next;
+    });
+  }
+
   async function handleSaveLead(values: CreateBackendBusinessInput) {
     setFormError(null);
     try {
@@ -414,7 +429,12 @@ export function BackendLeadsView() {
             <TableHeader>
               <TableRow>
                 <TableHead className="w-10">
-                  <span className="sr-only">Select</span>
+                  <Checkbox
+                    checked={allOnPageSelected ? true : someOnPageSelected ? 'indeterminate' : false}
+                    onCheckedChange={toggleAllOnPage}
+                    disabled={rows.length === 0}
+                    aria-label="Select all on this page"
+                  />
                 </TableHead>
                 <TableHead>Business</TableHead>
                 <TableHead>Location</TableHead>
