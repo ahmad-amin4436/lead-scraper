@@ -105,6 +105,7 @@ export interface BackendBusinessStats {
   byCategory: { label: string; count: number }[];
   byCountry: { label: string; count: number }[];
   bySource: { label: string; count: number }[];
+  addedLast7Days: { date: string; count: number }[];
 }
 
 // --- errors ----------------------------------------------------------------

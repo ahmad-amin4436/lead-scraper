@@ -6,6 +6,7 @@ using LeadMine.Application.Interfaces;
 using LeadMine.Domain.Entities;
 using LeadMine.Domain.Enums;
 using LeadMine.Infrastructure.Persistence;
+using LeadMine.Infrastructure.Scraping.Verification;
 using Microsoft.EntityFrameworkCore;
 
 namespace LeadMine.Infrastructure.Services;
@@ -13,7 +14,8 @@ namespace LeadMine.Infrastructure.Services;
 public sealed partial class BusinessService(
     LeadMineDbContext db,
     ICurrentUser currentUser,
-    IAuditService audit) : IBusinessService
+    IAuditService audit,
+    VerificationService verification) : IBusinessService
 {
     /// <summary>
     /// Restricts a lead query to what the caller is allowed to see.
@@ -59,9 +61,51 @@ public sealed partial class BusinessService(
         BusinessQueryRequest request,
         CancellationToken ct = default)
     {
-        var query = ApplyKind(
-            ScopeToCaller(db.Businesses.AsNoTracking(), request.OwnerUserId),
-            request.Kind);
+        var query = ApplyFilters(db.Businesses.AsNoTracking(), request);
+
+        var total = await query.CountAsync(ct);
+
+        query = ApplySort(query, request.SortBy, request.SortDir);
+
+        var items = await query
+            .Skip((Math.Max(1, request.Page) - 1) * request.PageSize)
+            .Take(request.PageSize)
+            .Select(b => Map(b))
+            .ToListAsync(ct);
+
+        return PagedResult<BusinessDto>.Create(items, total, request.Page, request.PageSize);
+    }
+
+    /// <summary>
+    /// Deletes every lead matching <paramref name="request"/>'s filters.
+    /// <para>
+    /// Shares <see cref="ApplyFilters"/> with <see cref="QueryAsync"/> rather
+    /// than re-stating the criteria: "delete all" must remove exactly what the
+    /// screen it was triggered from was showing, not a second interpretation of
+    /// the same filters that could quietly diverge from it. Page and sort
+    /// fields on the request are ignored — a delete has no page.
+    /// </para>
+    /// </summary>
+    public async Task<Result<int>> DeleteAllAsync(BusinessQueryRequest request, CancellationToken ct = default)
+    {
+        // Tracked, not AsNoTracking: RemoveRange needs the entities attached so
+        // SaveChanges can convert the removal into a soft delete.
+        var entities = await ApplyFilters(db.Businesses, request).ToListAsync(ct);
+        if (entities.Count == 0) return Result<int>.Success(0);
+
+        db.Businesses.RemoveRange(entities);
+        await db.SaveChangesAsync(ct);
+
+        await audit.LogAsync("Lead.BulkDeleted", nameof(Business), null, true,
+            new { count = entities.Count }, ct);
+
+        return Result<int>.Success(entities.Count);
+    }
+
+    /// <summary>Every filter <see cref="QueryAsync"/> and <see cref="DeleteAllAsync"/> share.</summary>
+    private IQueryable<Business> ApplyFilters(IQueryable<Business> source, BusinessQueryRequest request)
+    {
+        var query = ApplyKind(ScopeToCaller(source, request.OwnerUserId), request.Kind);
 
         if (!string.IsNullOrWhiteSpace(request.Search))
         {
@@ -101,17 +145,7 @@ public sealed partial class BusinessService(
             query = request.HasWebsite.Value ? query.Where(b => b.Website != "") : query.Where(b => b.Website == "");
         }
 
-        var total = await query.CountAsync(ct);
-
-        query = ApplySort(query, request.SortBy, request.SortDir);
-
-        var items = await query
-            .Skip((Math.Max(1, request.Page) - 1) * request.PageSize)
-            .Take(request.PageSize)
-            .Select(b => Map(b))
-            .ToListAsync(ct);
-
-        return PagedResult<BusinessDto>.Create(items, total, request.Page, request.PageSize);
+        return query;
     }
 
     /// <summary>
@@ -287,6 +321,98 @@ public sealed partial class BusinessService(
                 .Select(x => new CountByLabel(x.Source.ToString(), x.Count))
                 .OrderByDescending(x => x.Count)
                 .ToList(),
+            AddedLast7Days = await LastSevenDaysAsync(query, ct),
+        };
+    }
+
+    /// <summary>
+    /// One count per day for the last 7 days (today inclusive), oldest first,
+    /// with zero-lead days present rather than omitted — the dashboard chart
+    /// draws a fixed 7 bars and would misread a missing day as "no data yet"
+    /// instead of "zero".
+    /// </summary>
+    private static async Task<List<CountByDate>> LastSevenDaysAsync(IQueryable<Business> query, CancellationToken ct)
+    {
+        var since = DateTimeOffset.UtcNow.Date.AddDays(-6);
+
+        // Grouped by calendar-part tuple rather than `.Date`: every EF Core SQL
+        // Server provider translates year/month/day grouping reliably, whereas
+        // DateTimeOffset.Date translation has been provider-version-dependent.
+        var daily = await query
+            .Where(b => b.CreatedAt >= since)
+            .GroupBy(b => new { b.CreatedAt.Year, b.CreatedAt.Month, b.CreatedAt.Day })
+            .Select(g => new { g.Key.Year, g.Key.Month, g.Key.Day, Count = g.Count() })
+            .ToListAsync(ct);
+
+        return Enumerable.Range(0, 7)
+            .Select(offset => since.AddDays(offset))
+            .Select(day => new CountByDate(
+                day.ToString("yyyy-MM-dd"),
+                daily.Find(d => d.Year == day.Year && d.Month == day.Month && d.Day == day.Day)?.Count ?? 0))
+            .ToList();
+    }
+
+    /// <summary>
+    /// Backfills verification in bounded batches, so one call can't run
+    /// unbounded against a large table. The caller re-invokes while
+    /// <see cref="VerifyLeadsResultDto.Remaining"/> is above zero.
+    /// </summary>
+    public async Task<VerifyLeadsResultDto> VerifyAsync(VerifyLeadsRequest request, CancellationToken ct = default)
+    {
+        var stopwatch = System.Diagnostics.Stopwatch.StartNew();
+
+        // Only rows that have something worth checking.
+        var candidateQuery = ScopeToCaller(db.Businesses, null)
+            .Where(b => b.Email != "" || b.Phone != "");
+
+        if (!request.Force)
+        {
+            candidateQuery = candidateQuery.Where(b =>
+                b.EmailStatus == EmailStatus.Unverified || b.WhatsAppStatus == WhatsAppStatus.Unverified);
+        }
+
+        var candidateCount = await candidateQuery.CountAsync(ct);
+
+        var batch = await candidateQuery
+            .OrderBy(b => b.Id)
+            .Take(request.Limit)
+            .ToListAsync(ct);
+
+        // No concurrent DbContext access happens inside the loop — each check is
+        // DNS lookups and phone parsing against a distinct entity, so running
+        // them side by side is safe; SaveChanges happens once afterward.
+        await Parallel.ForEachAsync(
+            batch,
+            new ParallelOptions { MaxDegreeOfParallelism = 8, CancellationToken = ct },
+            async (lead, token) =>
+            {
+                try
+                {
+                    await verification.ApplyToAsync(lead, token);
+                }
+                catch (OperationCanceledException) when (token.IsCancellationRequested)
+                {
+                    throw;
+                }
+                catch
+                {
+                    // Best-effort backfill: one lead's DNS hiccup should not
+                    // sink the batch, and the unresolved row just gets picked
+                    // up again on the next call.
+                }
+            });
+
+        await db.SaveChangesAsync(ct);
+
+        await audit.LogAsync("Lead.Verified", nameof(Business), null, true,
+            new { count = batch.Count, force = request.Force }, ct);
+
+        return new VerifyLeadsResultDto
+        {
+            Verified = batch.Count,
+            Remaining = Math.Max(0, candidateCount - batch.Count),
+            Candidates = candidateCount,
+            ElapsedMs = stopwatch.ElapsedMilliseconds,
         };
     }
 

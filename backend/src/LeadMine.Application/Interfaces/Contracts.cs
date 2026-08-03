@@ -124,7 +124,18 @@ public interface IBusinessService
 
     Task<Result<int>> DeleteAsync(IReadOnlyList<Guid> ids, CancellationToken ct = default);
 
+    /// <summary>
+    /// Deletes every lead matching the given filters — not just a page of them.
+    /// Uses the identical filter logic as <see cref="QueryAsync"/>, so "delete
+    /// all" can never remove a row the screen it was requested from wasn't
+    /// showing.
+    /// </summary>
+    Task<Result<int>> DeleteAllAsync(BusinessQueryRequest request, CancellationToken ct = default);
+
     Task<BusinessStatsDto> GetStatsAsync(CancellationToken ct = default);
+
+    /// <summary>Backfills email/WhatsApp verification for leads that don't have it yet.</summary>
+    Task<VerifyLeadsResultDto> VerifyAsync(VerifyLeadsRequest request, CancellationToken ct = default);
 }
 
 /// <summary>Admin-managed email presets and signatures.</summary>

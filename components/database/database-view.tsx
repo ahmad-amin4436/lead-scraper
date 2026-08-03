@@ -56,7 +56,12 @@ import {
   TableHeader,
   TableRow,
 } from '@/components/ui/table';
-import { useBusinesses, useDeleteBusinesses, useVerifyContacts } from '@/hooks/use-api';
+import {
+  useBusinesses,
+  useDeleteAllBusinesses,
+  useDeleteBusinesses,
+  useVerifyContacts,
+} from '@/hooks/use-api';
 import { useDebouncedValue } from '@/hooks/use-debounced-value';
 import { BUSINESS_CATEGORIES } from '@/lib/constants/categories';
 import {
@@ -99,6 +104,7 @@ export function DatabaseView() {
   const [pageSize, setPageSize] = React.useState(25);
   const [selected, setSelected] = React.useState<Set<string>>(new Set());
   const [confirmOpen, setConfirmOpen] = React.useState(false);
+  const [confirmDeleteAllOpen, setConfirmDeleteAllOpen] = React.useState(false);
 
   const { search, category, status, emailStatus, whatsappStatus, hasEmail, minRating } = filters;
 
@@ -154,9 +160,26 @@ export function DatabaseView() {
     pageSize,
   ]);
 
+  /** The same filters as `query`, minus pagination and sort — what "delete all" acts on. */
+  const deleteAllFilters = React.useMemo<
+    Omit<BusinessQuery, 'page' | 'pageSize' | 'sortBy' | 'sortDir'>
+  >(
+    () => ({
+      search: query.search,
+      category: query.category,
+      status: query.status,
+      emailStatus: query.emailStatus,
+      whatsappStatus: query.whatsappStatus,
+      hasEmail: query.hasEmail,
+      minRating: query.minRating,
+    }),
+    [query],
+  );
+
   const businesses = useBusinesses(query);
   const verifyContacts = useVerifyContacts();
   const deleteBusinesses = useDeleteBusinesses();
+  const deleteAllBusinesses = useDeleteAllBusinesses();
 
   const rows = businesses.data?.rows ?? [];
   const total = businesses.data?.total ?? 0;
@@ -194,6 +217,18 @@ export function DatabaseView() {
         toast.success(`Deleted ${removed} record(s).`);
         setSelected(new Set());
         setConfirmOpen(false);
+      },
+      onError: (error) => toast.error(error.message),
+    });
+  };
+
+  const handleDeleteAll = (): void => {
+    deleteAllBusinesses.mutate(deleteAllFilters, {
+      onSuccess: ({ removed }) => {
+        toast.success(`Deleted ${formatNumber(removed)} record(s).`);
+        setSelected(new Set());
+        setPage(1);
+        setConfirmDeleteAllOpen(false);
       },
       onError: (error) => toast.error(error.message),
     });
@@ -242,8 +277,8 @@ export function DatabaseView() {
   return (
     <>
       <PageHeader
-        title="Excel database"
-        description="Every lead saved to /database/Businesses.xlsx."
+        title="Leads"
+        description="Every lead saved to your database, straight from SQL Server."
         actions={
           <>
             <Button
@@ -375,6 +410,22 @@ export function DatabaseView() {
               <span className="text-xs tabular-nums text-muted-foreground">
                 {formatNumber(total)} record{total === 1 ? '' : 's'}
               </span>
+              {total > 0 && (
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className="text-destructive hover:text-destructive"
+                  onClick={() => setConfirmDeleteAllOpen(true)}
+                  title={
+                    filtersActive
+                      ? 'Delete every lead matching the current filters, not just this page'
+                      : 'Delete every lead in the database'
+                  }
+                >
+                  <Trash2 />
+                  Delete all
+                </Button>
+              )}
             </div>
           </div>
         </CardContent>
@@ -597,8 +648,8 @@ export function DatabaseView() {
           <DialogHeader>
             <DialogTitle>Delete {formatNumber(selected.size)} record(s)?</DialogTitle>
             <DialogDescription>
-              This removes the rows from Businesses.xlsx permanently. Previously generated export
-              files are not affected.
+              This removes the selected leads from the database permanently. Previously generated
+              export files are not affected.
             </DialogDescription>
           </DialogHeader>
           <DialogFooter>
@@ -612,6 +663,32 @@ export function DatabaseView() {
             >
               <Trash2 />
               Delete permanently
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={confirmDeleteAllOpen} onOpenChange={setConfirmDeleteAllOpen}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Delete all {formatNumber(total)} matching lead(s)?</DialogTitle>
+            <DialogDescription>
+              {filtersActive
+                ? 'This removes every lead matching your current search and filters — not just the leads shown on this page — from the database permanently. Leads outside these filters are not affected.'
+                : 'This removes every lead in your database permanently, across every page. Previously generated export files are not affected.'}
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setConfirmDeleteAllOpen(false)}>
+              Cancel
+            </Button>
+            <Button
+              variant="destructive"
+              onClick={handleDeleteAll}
+              loading={deleteAllBusinesses.isPending}
+            >
+              <Trash2 />
+              Delete all {formatNumber(total)}
             </Button>
           </DialogFooter>
         </DialogContent>

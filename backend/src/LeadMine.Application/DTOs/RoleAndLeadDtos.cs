@@ -193,6 +193,34 @@ public sealed class BusinessStatsDto
     public IReadOnlyList<CountByLabel> ByCategory { get; set; } = Array.Empty<CountByLabel>();
     public IReadOnlyList<CountByLabel> ByCountry { get; set; } = Array.Empty<CountByLabel>();
     public IReadOnlyList<CountByLabel> BySource { get; set; } = Array.Empty<CountByLabel>();
+
+    /// <summary>Oldest first, one entry per day, including days with zero leads.</summary>
+    public IReadOnlyList<CountByDate> AddedLast7Days { get; set; } = Array.Empty<CountByDate>();
 }
 
 public sealed record CountByLabel(string Label, int Count);
+
+public sealed record CountByDate(string Date, int Count);
+
+/// <summary>Backfills verification for leads that don't have it yet.</summary>
+public sealed class VerifyLeadsRequest
+{
+    /// <summary>Re-check leads that already carry a status, not just unverified ones.</summary>
+    public bool Force { get; set; }
+
+    /// <summary>
+    /// Cap per call so one request can't run unbounded against a large table.
+    /// The client re-invokes while <see cref="VerifyLeadsResultDto.Remaining"/>
+    /// is above zero.
+    /// </summary>
+    [Range(1, 500)]
+    public int Limit { get; set; } = 400;
+}
+
+public sealed class VerifyLeadsResultDto
+{
+    public int Verified { get; set; }
+    public int Remaining { get; set; }
+    public int Candidates { get; set; }
+    public long ElapsedMs { get; set; }
+}

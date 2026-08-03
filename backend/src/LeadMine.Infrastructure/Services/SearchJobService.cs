@@ -109,7 +109,14 @@ public sealed class SearchJobService(
         int pageSize,
         CancellationToken ct = default)
     {
-        var query = ScopeToCaller(db.SearchJobs.AsNoTracking());
+        // History means finished runs; a run still in flight belongs to the
+        // active-jobs list. Filtering here — not in the caller — is what keeps
+        // `total`/pageCount correct for real pagination: filtering after the
+        // page is fetched would make some pages come back short.
+        var query = ScopeToCaller(db.SearchJobs.AsNoTracking())
+            .Where(j => j.Status == SearchJobStatus.Completed ||
+                        j.Status == SearchJobStatus.Failed ||
+                        j.Status == SearchJobStatus.Stopped);
 
         var total = await query.CountAsync(ct);
 

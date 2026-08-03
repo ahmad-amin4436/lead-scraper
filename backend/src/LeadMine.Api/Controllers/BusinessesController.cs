@@ -63,7 +63,7 @@ public sealed class BusinessesController(IBusinessService businesses) : ApiContr
         return result.Value == 0 ? NotFound() : NoContent();
     }
 
-    /// <summary>Bulk soft-delete.</summary>
+    /// <summary>Bulk soft-delete of explicit ids.</summary>
     [HttpPost("bulk-delete")]
     [HasPermission(Permissions.Leads.Delete)]
     [ProducesResponseType(StatusCodes.Status200OK)]
@@ -72,6 +72,30 @@ public sealed class BusinessesController(IBusinessService businesses) : ApiContr
         var result = await businesses.DeleteAsync(request.Ids, ct);
         return result.Succeeded ? Ok(new { removed = result.Value }) : Problem(result);
     }
+
+    /// <summary>
+    /// Deletes every lead matching the given filters, not just a page of them.
+    /// The same query shape as the list endpoint, so what gets deleted is
+    /// exactly what the caller was looking at when they asked for "all".
+    /// </summary>
+    [HttpDelete("all")]
+    [HasPermission(Permissions.Leads.Delete)]
+    [ProducesResponseType(StatusCodes.Status200OK)]
+    public async Task<ActionResult<object>> DeleteAll([FromQuery] BusinessQueryRequest request, CancellationToken ct)
+    {
+        var result = await businesses.DeleteAllAsync(request, ct);
+        return result.Succeeded ? Ok(new { removed = result.Value }) : Problem(result);
+    }
+
+    /// <summary>
+    /// Backfills verification for a batch of leads. Call repeatedly while the
+    /// response's <c>remaining</c> is above zero.
+    /// </summary>
+    [HttpPost("verify")]
+    [HasPermission(Permissions.Leads.Verify)]
+    [ProducesResponseType(typeof(VerifyLeadsResultDto), StatusCodes.Status200OK)]
+    public async Task<ActionResult<VerifyLeadsResultDto>> Verify(VerifyLeadsRequest request, CancellationToken ct)
+        => Ok(await businesses.VerifyAsync(request, ct));
 }
 
 /// <summary>Liveness/readiness probe. Anonymous by design.</summary>

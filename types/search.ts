@@ -85,3 +85,11 @@ export interface LiveResult extends BusinessRecord {
   /** Set when the record was skipped because it already exists. */
   duplicate: boolean;
 }
+
+export interface SearchHistoryPage {
+  items: SearchHistoryEntry[];
+  total: number;
+  page: number;
+  pageSize: number;
+  pageCount: number;
+}

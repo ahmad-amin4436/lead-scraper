@@ -1,4 +1,5 @@
 using LeadMine.Application.DTOs;
+using LeadMine.Domain.Entities;
 using LeadMine.Domain.Enums;
 
 namespace LeadMine.Infrastructure.Scraping.Verification;
@@ -47,20 +48,52 @@ public sealed class VerificationService(EmailVerifier emailVerifier)
     }
 
     /// <summary>Verifies a scraped lead and writes the results onto it in place.</summary>
-    public async Task<VerificationOutcome> ApplyToAsync(IngestLead lead, CancellationToken ct = default)
+    public Task<VerificationOutcome> ApplyToAsync(IngestLead lead, CancellationToken ct = default) =>
+        ApplyToAsync(
+            lead.Email, lead.Phone, lead.Country, lead.WhatsApp,
+            status => lead.EmailStatus = status,
+            status => lead.WhatsAppStatus = status,
+            link => lead.WhatsApp = link,
+            ct);
+
+    /// <summary>
+    /// Verifies a stored lead and writes the results onto it in place.
+    /// <para>
+    /// Separate overload rather than a shared base type: a freshly scraped
+    /// <see cref="IngestLead"/> and a persisted <see cref="Business"/> row have
+    /// no common ancestor worth introducing just for this one call.
+    /// </para>
+    /// </summary>
+    public Task<VerificationOutcome> ApplyToAsync(Business lead, CancellationToken ct = default) =>
+        ApplyToAsync(
+            lead.Email, lead.Phone, lead.Country, lead.WhatsApp,
+            status => lead.EmailStatus = status,
+            status => lead.WhatsAppStatus = status,
+            link => lead.WhatsApp = link,
+            ct);
+
+    private async Task<VerificationOutcome> ApplyToAsync(
+        string email,
+        string phone,
+        string country,
+        string whatsApp,
+        Action<EmailStatus> setEmailStatus,
+        Action<WhatsAppStatus> setWhatsAppStatus,
+        Action<string> setWhatsAppLink,
+        CancellationToken ct)
     {
-        var published = string.IsNullOrWhiteSpace(lead.WhatsApp) ? null : lead.WhatsApp;
+        var published = string.IsNullOrWhiteSpace(whatsApp) ? null : whatsApp;
 
-        var outcome = await VerifyAsync(lead.Email, lead.Phone, lead.Country, published, ct);
+        var outcome = await VerifyAsync(email, phone, country, published, ct);
 
-        lead.EmailStatus = outcome.EmailStatus;
-        lead.WhatsAppStatus = outcome.WhatsAppStatus;
+        setEmailStatus(outcome.EmailStatus);
+        setWhatsAppStatus(outcome.WhatsAppStatus);
 
         // Only fill the WhatsApp column when it's empty — never overwrite a link
         // the business published with one we derived.
         if (published is null && outcome.WhatsAppLink.Length > 0)
         {
-            lead.WhatsApp = outcome.WhatsAppLink;
+            setWhatsAppLink(outcome.WhatsAppLink);
         }
 
         return outcome;

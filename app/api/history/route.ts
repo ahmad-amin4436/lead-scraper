@@ -5,33 +5,43 @@ import type { BackendPagedResult } from '@/lib/backend/types';
 
 export const dynamic = 'force-dynamic';
 
-/** Statuses that belong in history; anything else is still in flight. */
-const FINISHED = new Set(['Completed', 'Failed', 'Stopped']);
+function parsePositiveInt(value: string | null, fallback: number, max: number): number {
+  const parsed = value ? Number.parseInt(value, 10) : NaN;
+  return Number.isFinite(parsed) && parsed > 0 ? Math.min(parsed, max) : fallback;
+}
 
 /**
- * Past search runs.
+ * Past search runs, paged.
  *
- * Read straight from the search-job table rather than a separate history store:
- * a run and its history entry were always the same thing, and keeping two copies
- * meant they could disagree about whether a run had finished.
+ * Read straight from the search-job table rather than a separate history
+ * store: a run and its history entry were always the same thing, and keeping
+ * two copies meant they could disagree about whether a run had finished. The
+ * backend already excludes runs still in flight, so `total`/`pageCount` here
+ * are accurate for real pagination rather than an estimate.
  */
 export function GET(request: Request): Promise<Response> {
   return handle(async () => {
-    const limitParam = new URL(request.url).searchParams.get('limit');
-    const parsed = limitParam ? Number.parseInt(limitParam, 10) : NaN;
-    const limit = Number.isFinite(parsed) && parsed > 0 ? Math.min(parsed, 100) : 50;
+    const params = new URL(request.url).searchParams;
+    const page = parsePositiveInt(params.get('page'), 1, 100_000);
+    const pageSize = parsePositiveInt(params.get('pageSize'), 25, 100);
 
     const { response } = await backendRequest('/api/searches', {
-      query: { page: 1, pageSize: limit },
+      query: { page, pageSize },
     });
 
     if (!response.ok) {
       return fail('Could not load search history.', 'backend_error', response.status);
     }
 
-    const page = (await response.json()) as BackendPagedResult<BackendSearchJob>;
+    const result = (await response.json()) as BackendPagedResult<BackendSearchJob>;
 
-    return ok(page.items.filter((job) => FINISHED.has(job.status)).map(toHistoryEntry));
+    return ok({
+      items: result.items.map(toHistoryEntry),
+      total: result.total,
+      page: result.page,
+      pageSize: result.pageSize,
+      pageCount: result.pageCount,
+    });
   });
 }
 

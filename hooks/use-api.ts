@@ -13,7 +13,7 @@ import type { BusinessPage, BusinessQuery, BusinessStats } from '@/types/busines
 import type { ExportRecord, ExportRequest } from '@/types/export';
 import type { JobSnapshot } from '@/types/job';
 import type { LogPage, LogQuery } from '@/types/log';
-import type { SearchHistoryEntry, SearchRequest } from '@/types/search';
+import type { SearchHistoryPage, SearchRequest } from '@/types/search';
 import type { PublicAppSettings } from '@/types/settings';
 import type { SettingsInput } from '@/lib/validation/settings.schema';
 
@@ -66,6 +66,30 @@ export function useDeleteBusinesses(): UseMutationResult<{ removed: number }, Er
       apiFetch<{ removed: number }>('/api/businesses', {
         method: 'DELETE',
         body: JSON.stringify({ ids }),
+      }),
+    onSuccess: () => {
+      void client.invalidateQueries({ queryKey: ['businesses'] });
+    },
+  });
+}
+
+/**
+ * Deletes every lead matching a filter set, not just a page of them. Takes the
+ * same filter shape the list query uses, so "delete all" always matches
+ * exactly what the screen it was triggered from was showing.
+ */
+export function useDeleteAllBusinesses(): UseMutationResult<
+  { removed: number },
+  Error,
+  Omit<BusinessQuery, 'page' | 'pageSize' | 'sortBy' | 'sortDir'>
+> {
+  const client = useQueryClient();
+
+  return useMutation({
+    mutationFn: (filters) =>
+      apiFetch<{ removed: number }>('/api/businesses/delete-all', {
+        method: 'POST',
+        body: JSON.stringify(filters),
       }),
     onSuccess: () => {
       void client.invalidateQueries({ queryKey: ['businesses'] });
@@ -159,11 +183,18 @@ export function useActiveJobs(): UseQueryResult<JobSnapshot[]> {
 
 // --- history ---------------------------------------------------------------
 
-export function useHistory(limit?: number): UseQueryResult<SearchHistoryEntry[]> {
+export interface HistoryQuery {
+  page?: number;
+  pageSize?: number;
+}
+
+export function useHistory(query: HistoryQuery = {}): UseQueryResult<SearchHistoryPage> {
   return useQuery({
-    queryKey: [...queryKeys.history, limit ?? 'all'],
+    queryKey: [...queryKeys.history, query],
     queryFn: () =>
-      apiFetch<SearchHistoryEntry[]>(`/api/history${buildQueryString({ limit })}`),
+      apiFetch<SearchHistoryPage>(`/api/history${buildQueryString(query as Record<string, unknown>)}`),
+    // Keeps the previous page visible while the next one loads.
+    placeholderData: (previous) => previous,
   });
 }
 

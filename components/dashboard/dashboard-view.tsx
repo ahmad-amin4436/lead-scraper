@@ -32,7 +32,7 @@ function coveragePercent(part: number, total: number): number {
 
 export function DashboardView() {
   const stats = useBusinessStats();
-  const history = useHistory(6);
+  const history = useHistory({ pageSize: 6 });
 
   const data = stats.data;
   const total = data?.total ?? 0;
@@ -73,7 +73,7 @@ export function DashboardView() {
         <StatCard
           label="Total leads"
           value={formatNumber(total)}
-          hint="Rows in Businesses.xlsx"
+          hint="Saved in your database"
           icon={Database}
           loading={stats.isPending}
         />
@@ -243,7 +243,7 @@ export function DashboardView() {
                   <Skeleton key={key} className="h-10 w-full" />
                 ))}
               </div>
-            ) : (history.data?.length ?? 0) === 0 ? (
+            ) : (history.data?.items.length ?? 0) === 0 ? (
               <div className="px-5 pb-5">
                 <EmptyState
                   icon={<TrendingUp />}
@@ -263,7 +263,7 @@ export function DashboardView() {
                     </TableRow>
                   </TableHeader>
                   <TableBody>
-                    {history.data?.map((entry) => (
+                    {history.data?.items.map((entry) => (
                       <TableRow key={entry.id}>
                         <TableCell className="pl-5">
                           <p className="max-w-[220px] truncate font-medium">
