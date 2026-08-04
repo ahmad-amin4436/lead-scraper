@@ -70,13 +70,3 @@ backend/**/obj/
 backend/.vs/
 **/*.csproj.user
 
-# ---------------------------------------------------------------------------
-# Environment files
-#
-# .env.local is tracked on purpose (real values and all) — see commit history
-# for why. .env.example is the template. Other .env.* variants stay ignored.
-# ---------------------------------------------------------------------------
-.env
-.env.*
-!.env.example
-!.env.local
