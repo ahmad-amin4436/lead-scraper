@@ -48,6 +48,31 @@ export const searchRequestSchema = z.object({
 
 export type SearchRequestInput = z.infer<typeof searchRequestSchema>;
 
+/**
+ * A relaxed version of {@link searchRequestSchema} for values persisted to
+ * `localStorage` between visits. The real schema requires at least one
+ * category/city because that's a submission rule — but a saved draft may
+ * legitimately have neither yet (e.g. the user changed country and hasn't
+ * repicked a city). Every field is optional so a partially-corrupt or
+ * out-of-date record still yields whatever parts remain valid.
+ */
+export const searchFormFiltersSchema = z.object({
+  categories: z.array(z.string()).max(20).optional(),
+  country: z.string().min(2).optional(),
+  state: z.string().max(120).optional(),
+  cities: z.array(z.string().trim().min(1).max(120)).max(25).optional(),
+  radiusMeters: z.number().int().min(500).max(50000).optional(),
+  maxResults: z.number().int().min(1).max(500).optional(),
+  enrichContacts: z.boolean().optional(),
+  skipDuplicates: z.boolean().optional(),
+  leadKind: z.enum(LEAD_KINDS).optional(),
+  minRating: z.number().min(0).max(5).optional(),
+  minReviews: z.number().int().min(0).max(100000).optional(),
+  provider: z.enum(BUSINESS_SOURCES).optional(),
+});
+
+export type SearchFormFilters = z.infer<typeof searchFormFiltersSchema>;
+
 export const jobCommandSchema = z.object({
   command: z.enum(['stop']),
 });

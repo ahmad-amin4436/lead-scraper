@@ -22,6 +22,7 @@ import {
 } from '@/components/ui/select';
 import { Switch } from '@/components/ui/switch';
 import type { ProviderStatus } from '@/hooks/use-api';
+import { usePersistSearchFilters } from '@/hooks/use-persisted-search-filters';
 import {
   MAX_RESULT_PRESETS,
   RADIUS_PRESETS,
@@ -63,6 +64,8 @@ export function SearchForm({ defaults, providers, submitting, disabled, onSubmit
 
   const countryOptions = React.useMemo(() => getCountryOptions(), []);
   const stateOptions = React.useMemo(() => getStateOptions(country), [country]);
+
+  usePersistSearchFilters(control);
 
   const activeProvider = providers.find((item) => item.id === provider);
 

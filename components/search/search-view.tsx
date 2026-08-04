@@ -13,6 +13,7 @@ import { Button } from '@/components/ui/button';
 import { Alert, AlertDescription, Skeleton } from '@/components/ui/misc';
 import { useActiveJobs, useJobCommand, useSettings, useStartSearch } from '@/hooks/use-api';
 import { useJobPoll } from '@/hooks/use-job-poll';
+import { loadPersistedSearchFilters } from '@/hooks/use-persisted-search-filters';
 import { isValidCategory } from '@/lib/constants/categories';
 import { isValidCountry } from '@/lib/constants/locations';
 import type { SearchRequestInput } from '@/lib/validation/search.schema';
@@ -80,25 +81,37 @@ export function SearchView() {
 
   const rerun = React.useMemo(() => parseRerun(searchParams.get('rerun')), [searchParams]);
 
+  // Read once per mount — after that, usePersistSearchFilters (inside
+  // SearchForm) keeps localStorage in sync as the user edits the form.
+  const persisted = React.useMemo(() => loadPersistedSearchFilters(), []);
+
   const defaults = React.useMemo<SearchRequestInput | null>(() => {
     if (!settings.data) return null;
     const { settings: config } = settings.data;
 
+    // Precedence per field: an explicit rerun (one-time, from History) beats
+    // what was last saved in this browser, which beats the system default.
     return {
-      categories: rerun?.categories?.length ? rerun.categories : ['restaurant'],
-      country: rerun?.country ?? 'US',
-      state: rerun?.state,
-      cities: rerun?.cities?.length ? rerun.cities : [],
-      radiusMeters: rerun?.radiusMeters ?? config.defaultRadiusMeters,
-      maxResults: rerun?.maxResults ?? config.defaultMaxResults,
-      enrichContacts: rerun?.enrichContacts ?? config.enrichmentEnabledByDefault,
-      skipDuplicates: rerun?.skipDuplicates ?? config.skipDuplicatesByDefault,
-      minRating: rerun?.minRating,
-      minReviews: rerun?.minReviews,
-      leadKind: rerun?.leadKind ?? 'Any',
-      provider: rerun?.provider ?? config.defaultProvider,
+      categories: rerun?.categories?.length
+        ? rerun.categories
+        : persisted?.categories?.length
+          ? persisted.categories
+          : ['restaurant'],
+      country: rerun?.country ?? persisted?.country ?? 'US',
+      state: rerun?.state ?? persisted?.state,
+      cities: rerun?.cities?.length ? rerun.cities : persisted?.cities?.length ? persisted.cities : [],
+      radiusMeters: rerun?.radiusMeters ?? persisted?.radiusMeters ?? config.defaultRadiusMeters,
+      maxResults: rerun?.maxResults ?? persisted?.maxResults ?? config.defaultMaxResults,
+      enrichContacts:
+        rerun?.enrichContacts ?? persisted?.enrichContacts ?? config.enrichmentEnabledByDefault,
+      skipDuplicates:
+        rerun?.skipDuplicates ?? persisted?.skipDuplicates ?? config.skipDuplicatesByDefault,
+      minRating: rerun?.minRating ?? persisted?.minRating,
+      minReviews: rerun?.minReviews ?? persisted?.minReviews,
+      leadKind: rerun?.leadKind ?? persisted?.leadKind ?? 'Any',
+      provider: rerun?.provider ?? persisted?.provider ?? config.defaultProvider,
     };
-  }, [settings.data, rerun]);
+  }, [settings.data, rerun, persisted]);
 
   const isActive =
     job !== null &&
