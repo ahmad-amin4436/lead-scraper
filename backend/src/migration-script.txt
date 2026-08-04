@@ -1,0 +1,6 @@
+dotnet ef migrations script --idempotent --project LeadMine.Infrastructure --startup-project LeadMine.Api -o migration.sql
+
+run migrations:
+
+cd "C:\Users\Muhammad Ahmad Amin\Documents\GitHub\lead-scraper\backend\src"
+dotnet ef database update --project LeadMine.Infrastructure --startup-project LeadMine.Api
