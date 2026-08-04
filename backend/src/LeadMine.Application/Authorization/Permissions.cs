@@ -65,6 +65,19 @@ public static class Permissions
         public const string ViewAllLogs = "email.view-all-logs";
     }
 
+    [PermissionGroup("WhatsApp")]
+    public static class WhatsApp
+    {
+        [PermissionDescription("Generate click-to-chat WhatsApp links for leads using an approved preset")]
+        public const string Send = "whatsapp.send";
+
+        [PermissionDescription("View WhatsApp presets available to you")]
+        public const string ViewTemplates = "whatsapp.view-templates";
+
+        [PermissionDescription("Create, edit and retire WhatsApp presets")]
+        public const string ManageTemplates = "whatsapp.manage-templates";
+    }
+
     [PermissionGroup("Searches")]
     public static class Searches
     {

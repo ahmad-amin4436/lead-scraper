@@ -33,6 +33,8 @@ export interface BackendBusinessQuery {
   hasWebsite?: boolean;
   /** True: only leads already emailed. False: only leads never emailed. */
   hasBeenContacted?: boolean;
+  /** Same idea as hasBeenContacted, tracked independently for WhatsApp. */
+  hasBeenWhatsAppContacted?: boolean;
   minRating?: number;
   page?: number;
   pageSize?: number;

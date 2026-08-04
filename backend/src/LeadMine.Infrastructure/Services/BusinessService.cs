@@ -152,6 +152,13 @@ public sealed partial class BusinessService(
                 : query.Where(b => b.LastContactedAt == null);
         }
 
+        if (request.HasBeenWhatsAppContacted.HasValue)
+        {
+            query = request.HasBeenWhatsAppContacted.Value
+                ? query.Where(b => b.LastWhatsAppContactedAt != null)
+                : query.Where(b => b.LastWhatsAppContactedAt == null);
+        }
+
         return query;
     }
 

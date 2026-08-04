@@ -177,6 +177,36 @@ public interface IEmailService
     Task<Result> TestConnectionAsync(CancellationToken ct = default);
 }
 
+/// <summary>Admin-managed WhatsApp click-to-chat presets.</summary>
+public interface IWhatsAppTemplateService
+{
+    Task<IReadOnlyList<WhatsAppTemplateDto>> GetTemplatesAsync(bool activeOnly, CancellationToken ct = default);
+
+    Task<Result<WhatsAppTemplateDto>> GetTemplateAsync(Guid id, CancellationToken ct = default);
+
+    Task<Result<WhatsAppTemplateDto>> CreateTemplateAsync(CreateWhatsAppTemplateRequest request, CancellationToken ct = default);
+
+    Task<Result<WhatsAppTemplateDto>> UpdateTemplateAsync(Guid id, UpdateWhatsAppTemplateRequest request, CancellationToken ct = default);
+
+    Task<Result> DeleteTemplateAsync(Guid id, CancellationToken ct = default);
+}
+
+/// <summary>
+/// Builds wa.me click-to-chat links from a preset and records that contact was
+/// initiated. There is no server-side "send" — WhatsApp automation is
+/// deliberately out of scope, so this only prepares what the caller opens
+/// themselves.
+/// </summary>
+public interface IWhatsAppService
+{
+    Task<Result<GenerateWhatsAppLinksResultDto>> GenerateLinksAsync(GenerateWhatsAppLinksRequest request, CancellationToken ct = default);
+
+    Task<Result<WhatsAppPreviewDto>> PreviewAsync(WhatsAppPreviewRequest request, CancellationToken ct = default);
+
+    /// <summary>Called when the caller actually clicks a generated link open.</summary>
+    Task<Result> MarkContactedAsync(MarkWhatsAppContactedRequest request, CancellationToken ct = default);
+}
+
 /// <summary>Writes the append-only security audit trail.</summary>
 public interface IAuditService
 {

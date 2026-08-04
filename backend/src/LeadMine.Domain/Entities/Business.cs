@@ -88,4 +88,16 @@ public class Business : AuditableEntity
     public DateTimeOffset? LastContactedAt { get; set; }
 
     public int TimesContacted { get; set; }
+
+    /// <summary>
+    /// Set when the caller opens a click-to-chat WhatsApp link for this lead —
+    /// there is no delivery confirmation the way SMTP gives one, so this means
+    /// "a send was initiated", not "the message arrived". Kept separate from
+    /// <see cref="LastContactedAt"/> because the two channels are contacted
+    /// independently: emailing a lead should not hide it from WhatsApp outreach
+    /// or vice versa.
+    /// </summary>
+    public DateTimeOffset? LastWhatsAppContactedAt { get; set; }
+
+    public int WhatsAppTimesContacted { get; set; }
 }

@@ -165,6 +165,14 @@ public sealed class BusinessQueryRequest
     public bool? HasBeenContacted { get; set; }
 
     /// <summary>
+    /// Same idea as <see cref="HasBeenContacted"/> but for the WhatsApp
+    /// click-to-chat channel (<c>LastWhatsAppContactedAt</c>), which is tracked
+    /// independently since a lead can be emailed without being WhatsApp'd or
+    /// vice versa.
+    /// </summary>
+    public bool? HasBeenWhatsAppContacted { get; set; }
+
+    /// <summary>
     /// Admin-only. Restricts the list to one user's leads. Ignored — and the
     /// caller forced to their own rows — without `leads.view-all`.
     /// </summary>

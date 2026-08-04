@@ -38,6 +38,9 @@ public class LeadMineDbContext(
     public DbSet<EmailSignature> EmailSignatures => Set<EmailSignature>();
     public DbSet<EmailLog> EmailLogs => Set<EmailLog>();
 
+    public DbSet<WhatsAppTemplate> WhatsAppTemplates => Set<WhatsAppTemplate>();
+    public DbSet<WhatsAppContactLog> WhatsAppContactLogs => Set<WhatsAppContactLog>();
+
     protected override void OnModelCreating(ModelBuilder builder)
     {
         base.OnModelCreating(builder);

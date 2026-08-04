@@ -94,6 +94,8 @@ public static class DbSeeder
                 Permissions.Email.Send, Permissions.Email.ViewTemplates,
                 Permissions.Email.ManageTemplates, Permissions.Email.ManageSignatures,
                 Permissions.Email.ViewOwnLog, Permissions.Email.ViewAllLogs,
+                Permissions.WhatsApp.Send, Permissions.WhatsApp.ViewTemplates,
+                Permissions.WhatsApp.ManageTemplates,
             ]),
 
         [RoleNames.Analyst] = (
@@ -104,6 +106,7 @@ public static class DbSeeder
                 Permissions.Searches.View, Permissions.Searches.Create, Permissions.Searches.Stop,
                 Permissions.Settings.View,
                 Permissions.Email.Send, Permissions.Email.ViewTemplates, Permissions.Email.ViewOwnLog,
+                Permissions.WhatsApp.Send, Permissions.WhatsApp.ViewTemplates,
             ]),
 
         [RoleNames.Viewer] = (

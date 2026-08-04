@@ -5,6 +5,7 @@ import {
   LayoutDashboard,
   Mail,
   MailCheck,
+  MessageCircle,
   ScrollText,
   Search,
   Send,
@@ -67,6 +68,13 @@ export const NAV_ITEMS: NavItem[] = [
     permission: 'email.view-own-log',
   },
   {
+    href: '/whatsapp/compose',
+    label: 'Send WhatsApp',
+    icon: MessageCircle,
+    description: 'Open click-to-chat links using an approved preset',
+    permission: 'whatsapp.send',
+  },
+  {
     href: '/history',
     label: 'Search History',
     icon: FileClock,
@@ -109,6 +117,14 @@ export const NAV_ITEMS: NavItem[] = [
     description: 'Every user’s sends, filterable by date',
     section: 'admin',
     permission: 'email.view-all-logs',
+  },
+  {
+    href: '/admin/whatsapp-templates',
+    label: 'WhatsApp Presets',
+    icon: MessageCircle,
+    description: 'Click-to-chat messages users open leads with',
+    section: 'admin',
+    permission: 'whatsapp.manage-templates',
   },
   {
     href: '/admin/users',

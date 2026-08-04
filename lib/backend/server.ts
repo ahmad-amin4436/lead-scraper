@@ -181,7 +181,10 @@ export async function backendToApiResult(response: Response): Promise<Response> 
   const isJson = contentType.toLowerCase().includes('application/json');
 
   if (response.ok) {
-    if (response.status === 204) return ok(null, { status: 204 });
+    // A 204 has no body by spec — Response.json() would throw if we tried to
+    // keep the 204 status here. The client always parses a JSON envelope
+    // regardless of status, so report success as 200 with a null payload.
+    if (response.status === 204) return ok(null);
     if (!isJson) return ok(await response.text(), { status: response.status });
 
     try {

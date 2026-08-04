@@ -151,6 +151,8 @@ public static class DependencyInjection
         services.AddScoped<IEmailSender, SmtpEmailSender>();
         services.AddScoped<IEmailTemplateService, EmailTemplateService>();
         services.AddScoped<IEmailService, EmailService>();
+        services.AddScoped<IWhatsAppTemplateService, WhatsAppTemplateService>();
+        services.AddScoped<IWhatsAppService, WhatsAppService>();
         services.AddScoped<ILeadIngestService, LeadIngestService>();
         services.AddScoped<ISearchJobService, SearchJobService>();
 
