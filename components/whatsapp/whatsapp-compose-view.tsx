@@ -59,13 +59,16 @@ const PAGE_SIZE = 50;
  * which stamps `LastWhatsAppContactedAt` on the lead the same way a real email
  * send stamps `LastContactedAt`.
  *
- * Only leads with a **confirmed** WhatsApp link are offered
- * (`whatsappStatus=Confirmed` — the business published the link on its own
- * website). "Likely" leads are excluded here even though they pass the
- * broader `WhatsAppOnly` kind elsewhere: that status is inferred from the
- * phone's line type, not verified, and this page is for actually messaging
- * someone rather than just filtering a list. Leads already WhatsApp'd are
- * hidden by default via `hasBeenWhatsAppContacted=false`.
+ * Leads plausibly reachable on WhatsApp are offered (`kind=WhatsAppOnly`:
+ * either a wa.me link published on the business's own site, or a mobile-type
+ * phone number). There is no way to verify WhatsApp registration for a number
+ * you don't own — not through the official API (which only covers numbers
+ * you control) and not through unofficial methods (a ToS violation this app
+ * won't do) — so every status here is evidence, not proof. Each lead's badge
+ * shows which kind of evidence it has ("Published on site" vs. "Likely") so
+ * the caller can judge case by case rather than the list hiding the
+ * distinction. Leads already WhatsApp'd are hidden by default via
+ * `hasBeenWhatsAppContacted=false`.
  */
 export function WhatsAppComposeView() {
   const [search, setSearch] = React.useState('');
@@ -80,9 +83,9 @@ export function WhatsAppComposeView() {
 
   const leads = useBackendBusinesses({
     search: debouncedSearch || undefined,
-    // Only businesses that published their own WhatsApp link — not merely a
-    // mobile-type number, which is an inference rather than evidence.
-    whatsappStatus: 'Confirmed',
+    // Recipients must plausibly have WhatsApp. Confirmed and Likely are both
+    // included — the badge per row shows which, since neither is a guarantee.
+    kind: 'WhatsAppOnly',
     hasBeenWhatsAppContacted: hideContacted ? false : undefined,
     page: 1,
     pageSize: PAGE_SIZE,
@@ -187,7 +190,8 @@ export function WhatsAppComposeView() {
           <CardHeader>
             <CardTitle>Recipients</CardTitle>
             <CardDescription>
-              Only your leads with a confirmed WhatsApp link are listed.
+              Only your leads plausibly reachable on WhatsApp are listed — each one&apos;s badge
+              shows how strong the evidence is.
             </CardDescription>
           </CardHeader>
           <CardContent className="space-y-4">
@@ -219,11 +223,11 @@ export function WhatsAppComposeView() {
             ) : rows.length === 0 ? (
               <EmptyState
                 icon={<MessageCircle />}
-                title={hideContacted ? 'Nothing left to contact' : 'No confirmed WhatsApp leads'}
+                title={hideContacted ? 'Nothing left to contact' : 'No WhatsApp-reachable leads'}
                 description={
                   hideContacted
-                    ? 'Every confirmed lead has already been WhatsApp\'d. Uncheck "Hide leads already WhatsApp\'d" to see them.'
-                    : 'A lead needs a WhatsApp link discovered on its own website to show up here — "Likely" (mobile-number inference) isn\'t enough.'
+                    ? 'Every reachable lead has already been WhatsApp\'d. Uncheck "Hide leads already WhatsApp\'d" to see them.'
+                    : 'Run a search with contact enrichment on to collect phone numbers.'
                 }
               />
             ) : (
