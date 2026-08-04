@@ -223,8 +223,24 @@ public static class DependencyInjection
                 PooledConnectionLifetime = TimeSpan.FromMinutes(5),
             });
 
+        // Apify platform calls (start run, poll status, fetch dataset). Each
+        // individual call is quick — the actor run itself is paced out as a
+        // poll loop in ApifyGoogleMapsProvider, not held open on this client.
+        services.AddHttpClient(ScraperHttpClients.Apify, client =>
+            {
+                client.Timeout = TimeSpan.FromSeconds(60);
+                client.DefaultRequestHeaders.Accept.ParseAdd("application/json");
+            })
+            .ConfigurePrimaryHttpMessageHandler(() => new SocketsHttpHandler
+            {
+                ConnectCallback = ScraperConnect.ConnectAsync,
+                AutomaticDecompression = DecompressionMethods.All,
+                PooledConnectionLifetime = TimeSpan.FromMinutes(5),
+            });
+
         services.AddSingleton<GooglePlacesProvider>();
         services.AddSingleton<OpenStreetMapProvider>();
+        services.AddSingleton<ApifyGoogleMapsProvider>();
         services.AddSingleton<ProviderRegistry>();
         services.AddSingleton<GeocodingService>();
 

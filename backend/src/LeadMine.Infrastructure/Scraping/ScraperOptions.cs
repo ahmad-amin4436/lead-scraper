@@ -77,6 +77,39 @@ public sealed class ScraperOptions
     /// </summary>
     public string GoogleApiKey { get; set; } = string.Empty;
 
+    /// <summary>
+    /// Apify API tokens, used to run the Google Maps Scraper actor as a
+    /// parallel data source alongside OpenStreetMap.
+    /// <para>
+    /// A list rather than one value: tried in order, and a token that is
+    /// rate-limited or rejected is skipped in favour of the next one, so one
+    /// exhausted or revoked Apify account does not take the whole data source
+    /// down. Empty means the Apify data source cannot run; every other
+    /// provider is unaffected.
+    /// </para>
+    /// <para>
+    /// Secrets: supply through user-secrets, environment variables
+    /// (<c>Scraper__ApifyApiTokens__0</c>, <c>__1</c>, …) or the host's
+    /// configuration store — never <c>appsettings.json</c>, which is committed.
+    /// </para>
+    /// </summary>
+    public List<string> ApifyApiTokens { get; set; } = [];
+
+    /// <summary>
+    /// Apify actor id (<c>owner~actor-name</c> form). Defaults to the most
+    /// widely used Google Maps scraper on the Apify Store — change this if you
+    /// use a different actor with a compatible input/output shape.
+    /// </summary>
+    public string ApifyActorId { get; set; } = "compass~crawler-google-places";
+
+    /// <summary>
+    /// Wall-clock budget for one Apify actor run (start → finish), not the
+    /// timeout of any single HTTP call. Scraping Google Maps is far slower than
+    /// a Places API call, so this is sized in minutes rather than seconds.
+    /// </summary>
+    [Range(30_000, 900_000)]
+    public int ApifyRunTimeoutMs { get; set; } = 180_000;
+
     /// <summary>Leads buffered before a write to the database.</summary>
     [Range(1, 500)]
     public int SaveBatchSize { get; set; } = 25;

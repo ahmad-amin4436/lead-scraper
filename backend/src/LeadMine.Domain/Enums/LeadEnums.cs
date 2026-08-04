@@ -6,6 +6,14 @@ public enum BusinessSource
     Manual = 0,
     GooglePlaces = 1,
     OpenStreetMap = 2,
+
+    /// <summary>
+    /// Google Maps, scraped via an Apify actor. Also the tag used for a lead
+    /// found by both the Apify and OpenStreetMap parallel sweep and merged —
+    /// Apify's data is preferred on conflicts, so the merged record is tagged
+    /// the same as an Apify-only one.
+    /// </summary>
+    Apify = 3,
 }
 
 /// <summary>Progress of contact discovery for a lead.</summary>

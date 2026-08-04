@@ -14,10 +14,16 @@ namespace LeadMine.Infrastructure.Scraping.Providers;
 public sealed class ProviderRegistry(
     GooglePlacesProvider google,
     OpenStreetMapProvider openStreetMap,
+    ApifyGoogleMapsProvider apify,
+    ILoggerFactory loggerFactory,
     ILogger<ProviderRegistry> logger)
 {
     public const string GoogleId = "google-places";
     public const string OpenStreetMapId = "openstreetmap";
+    public const string ApifyId = "apify";
+
+    /// <summary>Google Maps (Apify) and OpenStreetMap, swept at the same time and merged.</summary>
+    public const string ApifyParallelId = "apify-parallel";
 
     public IPlaceProvider Select(string? requested, ProviderContext context)
     {
@@ -38,6 +44,27 @@ public sealed class ProviderRegistry(
             }
 
             return google;
+        }
+
+        if (string.Equals(requested, ApifyId, StringComparison.OrdinalIgnoreCase))
+        {
+            var notReady = apify.Readiness(context);
+            if (notReady is not null) throw new ProviderException(notReady, ProviderFailure.MissingApiKey);
+
+            return apify;
+        }
+
+        if (string.Equals(requested, ApifyParallelId, StringComparison.OrdinalIgnoreCase))
+        {
+            var notReady = apify.Readiness(context);
+            if (notReady is not null) throw new ProviderException(notReady, ProviderFailure.MissingApiKey);
+
+            // A fresh instance per selection, not a singleton: it carries no
+            // state of its own beyond the two providers it wraps (which are
+            // themselves stateless singletons), so this is cheap, and it keeps
+            // "constructed once per run" an invariant nothing downstream needs
+            // to reason about.
+            return new ParallelMergedProvider(apify, openStreetMap, loggerFactory.CreateLogger<ParallelMergedProvider>());
         }
 
         // No explicit choice: use Google if it can run, otherwise OSM.

@@ -6,7 +6,19 @@
  * repository re-reads existing sheets by header name rather than by index.
  */
 
-export const BUSINESS_SOURCES = ['google-places', 'openstreetmap', 'manual'] as const;
+/**
+ * 'apify' and 'apify-parallel' are Google Maps, scraped via an Apify actor —
+ * the actual scraping and (for 'apify-parallel') the merge with OpenStreetMap
+ * happen entirely in the .NET backend's ProviderRegistry; these ids only need
+ * to round-trip through this Next.js layer unchanged.
+ */
+export const BUSINESS_SOURCES = [
+  'google-places',
+  'openstreetmap',
+  'apify',
+  'apify-parallel',
+  'manual',
+] as const;
 export type BusinessSource = (typeof BUSINESS_SOURCES)[number];
 
 export const BUSINESS_STATUSES = [

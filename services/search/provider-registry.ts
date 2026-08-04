@@ -1,4 +1,4 @@
-import '@/lib/server-guard';
+  import '@/lib/server-guard';
 
 import { ConfigurationError } from '@/lib/errors';
 import type { BusinessSource } from '@/types/business';
@@ -7,9 +7,33 @@ import { googlePlacesProvider } from './google-places.provider';
 import { openStreetMapProvider } from './openstreetmap.provider';
 import type { SearchProvider } from './provider';
 
+/**
+ * Google Maps (Apify) and its OSM-parallel variant run entirely in the .NET
+ * backend's ProviderRegistry — actual scraping, the merge, and readiness
+ * (whether Scraper:ApifyApiToken is configured) all happen there. This
+ * Next.js-native registry has no visibility into that config, so `search`
+ * here is intentionally unreachable: the real execution path never calls it
+ * (see app/api/search/route.ts, which forwards the raw request to the .NET
+ * API rather than running a provider in this process). `readiness` reports
+ * optimistically; an unconfigured token surfaces as a specific run failure
+ * instead of a pre-flight warning in this dropdown.
+ */
+function apifyBackedProvider(id: 'apify' | 'apify-parallel', label: string): SearchProvider {
+  return {
+    id,
+    label,
+    readiness: () => null,
+    search: () => {
+      throw new ConfigurationError(`${label} runs in the .NET backend, not this Next.js process.`);
+    },
+  };
+}
+
 const PROVIDERS: Record<Exclude<BusinessSource, 'manual'>, SearchProvider> = {
   'google-places': googlePlacesProvider,
   openstreetmap: openStreetMapProvider,
+  apify: apifyBackedProvider('apify', 'Google Maps (Apify)'),
+  'apify-parallel': apifyBackedProvider('apify-parallel', 'Google Maps + OpenStreetMap (parallel)'),
 };
 
 export function getProvider(id: BusinessSource): SearchProvider {
