@@ -41,6 +41,7 @@ import {
   TableRow,
 } from '@/components/ui/table';
 import {
+  useAssignUserRoles,
   useCreateUser,
   useDeleteUser,
   useResetUserPassword,
@@ -198,14 +199,29 @@ function AddUserDialog({ open, onOpenChange, roles, onSubmit }: AddUserDialogPro
   );
 }
 
+/** What the caller submitted, split by which endpoint each part belongs to. */
+interface EditUserPatch {
+  profile?: { firstName: string; lastName: string; isActive: boolean };
+  roles?: string[];
+}
+
 interface EditUserDialogProps {
   user: BackendUser;
   roles: BackendRole[];
-  onSubmit: (patch: Record<string, unknown>) => Promise<void>;
+  canEditProfile: boolean;
+  canManageRoles: boolean;
+  onSubmit: (patch: EditUserPatch) => Promise<void>;
   onClose: () => void;
 }
 
-function EditUserDialog({ user, roles, onSubmit, onClose }: EditUserDialogProps) {
+function EditUserDialog({
+  user,
+  roles,
+  canEditProfile,
+  canManageRoles,
+  onSubmit,
+  onClose,
+}: EditUserDialogProps) {
   const [firstName, setFirstName] = React.useState(user.firstName);
   const [lastName, setLastName] = React.useState(user.lastName);
   const [active, setActive] = React.useState(user.isActive);
@@ -223,7 +239,13 @@ function EditUserDialog({ user, roles, onSubmit, onClose }: EditUserDialogProps)
     setFormError(null);
     setSubmitting(true);
     try {
-      await onSubmit({ firstName, lastName, isActive: active, roles: selectedRoles });
+      // Role assignment is a distinct endpoint from the profile update (and a
+      // distinct permission) on the backend — only submit each part the
+      // caller is actually allowed to change.
+      await onSubmit({
+        profile: canEditProfile ? { firstName, lastName, isActive: active } : undefined,
+        roles: canManageRoles ? selectedRoles : undefined,
+      });
       onClose();
       toast.success('User updated');
     } catch (error) {
@@ -251,22 +273,42 @@ function EditUserDialog({ user, roles, onSubmit, onClose }: EditUserDialogProps)
           <div className="grid grid-cols-2 gap-3">
             <div className="space-y-2">
               <Label htmlFor="edit-firstName">First name</Label>
-              <Input id="edit-firstName" value={firstName} onChange={(event) => setFirstName(event.target.value)} />
+              <Input
+                id="edit-firstName"
+                value={firstName}
+                onChange={(event) => setFirstName(event.target.value)}
+                disabled={!canEditProfile}
+              />
             </div>
             <div className="space-y-2">
               <Label htmlFor="edit-lastName">Last name</Label>
-              <Input id="edit-lastName" value={lastName} onChange={(event) => setLastName(event.target.value)} />
+              <Input
+                id="edit-lastName"
+                value={lastName}
+                onChange={(event) => setLastName(event.target.value)}
+                disabled={!canEditProfile}
+              />
             </div>
           </div>
 
           <div className="flex items-center justify-between">
             <Label htmlFor="edit-active">Active</Label>
-            <Switch id="edit-active" checked={active} onCheckedChange={setActive} />
+            <Switch id="edit-active" checked={active} onCheckedChange={setActive} disabled={!canEditProfile} />
           </div>
 
           <div className="space-y-2">
             <Label>Roles</Label>
-            <RolesEditor roles={roles} selected={selectedRoles} onToggle={toggleRole} />
+            <RolesEditor
+              roles={roles}
+              selected={selectedRoles}
+              onToggle={toggleRole}
+              disabled={!canManageRoles}
+            />
+            {!canManageRoles && (
+              <p className="text-xs text-muted-foreground">
+                You don&apos;t have permission to change role assignments.
+              </p>
+            )}
           </div>
         </div>
 
@@ -309,13 +351,17 @@ export function UsersView() {
   const roles = useRoles();
   const createUser = useCreateUser();
   const updateUser = useUpdateUser();
+  const assignRoles = useAssignUserRoles();
   const deleteUser = useDeleteUser();
   const resetPassword = useResetUserPassword();
 
+  const canEditProfile = hasPermission('users.update');
+  const canManageRoles = hasPermission('users.manage-roles');
+
   const canManage =
+    canEditProfile ||
+    canManageRoles ||
     hasPermission('users.create') ||
-    hasPermission('users.update') ||
-    hasPermission('users.manage-roles') ||
     hasPermission('users.reset-password') ||
     hasPermission('users.delete');
 
@@ -534,9 +580,18 @@ export function UsersView() {
         <EditUserDialog
           user={editing}
           roles={roles.data ?? []}
+          canEditProfile={canEditProfile}
+          canManageRoles={canManageRoles}
           onClose={() => setEditing(null)}
           onSubmit={async (patch) => {
-            await updateUser.mutateAsync({ id: editing.id, patch });
+            // Two independent endpoints, each gated by its own permission —
+            // only call the ones the dialog actually populated.
+            if (patch.profile) {
+              await updateUser.mutateAsync({ id: editing.id, patch: patch.profile });
+            }
+            if (patch.roles) {
+              await assignRoles.mutateAsync({ id: editing.id, roles: patch.roles });
+            }
           }}
         />
       )}
