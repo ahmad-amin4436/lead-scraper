@@ -138,6 +138,18 @@ public interface IBusinessService
     Task<VerifyLeadsResultDto> VerifyAsync(VerifyLeadsRequest request, CancellationToken ct = default);
 }
 
+/// <summary>Decision-makers found via LinkedIn people search.</summary>
+public interface IPersonService
+{
+    Task<PagedResult<PersonDto>> QueryAsync(PersonQueryRequest request, CancellationToken ct = default);
+
+    Task<Result<PersonDto>> GetByIdAsync(Guid id, CancellationToken ct = default);
+
+    Task<Result<PersonDto>> UpdateAsync(Guid id, UpdatePersonRequest request, CancellationToken ct = default);
+
+    Task<Result> DeleteAsync(Guid id, CancellationToken ct = default);
+}
+
 /// <summary>Admin-managed email presets and signatures.</summary>
 public interface IEmailTemplateService
 {

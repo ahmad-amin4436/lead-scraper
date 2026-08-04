@@ -144,6 +144,7 @@ public static class DependencyInjection
         services.AddScoped<IUserService, UserService>();
         services.AddScoped<IRoleService, RoleService>();
         services.AddScoped<IBusinessService, BusinessService>();
+        services.AddScoped<IPersonService, PersonService>();
 
         services.AddOptions<SmtpOptions>()
             .Bind(configuration.GetSection(SmtpOptions.SectionName));
@@ -240,6 +241,7 @@ public static class DependencyInjection
 
         services.AddSingleton<GooglePlacesProvider>();
         services.AddSingleton<OpenStreetMapProvider>();
+        services.AddSingleton<ApifyClient>();
         services.AddSingleton<ApifyGoogleMapsProvider>();
         services.AddSingleton<ProviderRegistry>();
         services.AddSingleton<GeocodingService>();
@@ -248,6 +250,9 @@ public static class DependencyInjection
         services.AddSingleton<EnrichmentService>();
         services.AddSingleton<EmailVerifier>();
         services.AddSingleton<VerificationService>();
+        services.AddSingleton<ApifyMapsEnrichmentService>();
+        services.AddSingleton<ApifyLinkedInCompanyService>();
+        services.AddSingleton<ApifyLinkedInPeopleService>();
 
         // Scoped: the runner opens its own short-lived scopes for database work,
         // so it must not outlive the scope the worker resolves it from.

@@ -44,6 +44,9 @@ export const searchRequestSchema = z.object({
   minRating: z.number().min(0).max(5).optional(),
   minReviews: z.number().int().min(0).max(100000).optional(),
   provider: z.enum(BUSINESS_SOURCES).optional(),
+  enrichGoogleMaps: z.boolean(),
+  enrichLinkedIn: z.boolean(),
+  maxDecisionMakersPerCompany: z.number().int().min(1).max(50),
 });
 
 export type SearchRequestInput = z.infer<typeof searchRequestSchema>;
@@ -69,6 +72,9 @@ export const searchFormFiltersSchema = z.object({
   minRating: z.number().min(0).max(5).optional(),
   minReviews: z.number().int().min(0).max(100000).optional(),
   provider: z.enum(BUSINESS_SOURCES).optional(),
+  enrichGoogleMaps: z.boolean().optional(),
+  enrichLinkedIn: z.boolean().optional(),
+  maxDecisionMakersPerCompany: z.number().int().min(1).max(50).optional(),
 });
 
 export type SearchFormFilters = z.infer<typeof searchFormFiltersSchema>;

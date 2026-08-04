@@ -41,6 +41,8 @@ public class LeadMineDbContext(
     public DbSet<WhatsAppTemplate> WhatsAppTemplates => Set<WhatsAppTemplate>();
     public DbSet<WhatsAppContactLog> WhatsAppContactLogs => Set<WhatsAppContactLog>();
 
+    public DbSet<Person> People => Set<Person>();
+
     protected override void OnModelCreating(ModelBuilder builder)
     {
         base.OnModelCreating(builder);

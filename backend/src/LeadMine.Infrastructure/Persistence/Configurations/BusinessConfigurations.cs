@@ -27,6 +27,11 @@ public class BusinessConfiguration : IEntityTypeConfiguration<Business>
         builder.Property(b => b.MapsUrl).HasMaxLength(1024);
         builder.Property(b => b.Notes).HasMaxLength(2000);
 
+        builder.Property(b => b.PostalCode).HasMaxLength(32);
+        builder.Property(b => b.PlaceId).HasMaxLength(256);
+        builder.Property(b => b.Industry).HasMaxLength(256);
+        builder.Property(b => b.CompanyDescription).HasMaxLength(4000);
+
         builder.Property(b => b.DedupeWebsiteKey).HasMaxLength(256);
         builder.Property(b => b.DedupePhoneKey).HasMaxLength(32);
         builder.Property(b => b.DedupeNameKey).HasMaxLength(384);
@@ -65,6 +70,38 @@ public class BusinessConfiguration : IEntityTypeConfiguration<Business>
             .WithMany(j => j.Businesses)
             .HasForeignKey(b => b.SearchJobId)
             // Keep the leads if their originating run is purged.
+            .OnDelete(DeleteBehavior.SetNull);
+    }
+}
+
+public class PersonConfiguration : IEntityTypeConfiguration<Person>
+{
+    public void Configure(EntityTypeBuilder<Person> builder)
+    {
+        builder.ToTable("People");
+        builder.HasKey(p => p.Id);
+
+        builder.Property(p => p.CompanyName).HasMaxLength(256);
+        builder.Property(p => p.FullName).HasMaxLength(256).IsRequired();
+        builder.Property(p => p.JobTitle).HasMaxLength(256);
+        builder.Property(p => p.Headline).HasMaxLength(512);
+        builder.Property(p => p.LinkedInUrl).HasMaxLength(512);
+        builder.Property(p => p.Location).HasMaxLength(256);
+        builder.Property(p => p.Email).HasMaxLength(256);
+        builder.Property(p => p.Phone).HasMaxLength(64);
+        builder.Property(p => p.DecisionMakerRole).HasMaxLength(256);
+
+        builder.HasIndex(p => p.BusinessId);
+        builder.HasIndex(p => p.OwnerUserId);
+        builder.HasIndex(p => new { p.OwnerUserId, p.CreatedAt });
+        builder.HasIndex(p => p.IsDecisionMaker);
+        builder.HasIndex(p => p.LinkedInUrl);
+
+        builder.HasOne(p => p.Business)
+            .WithMany(b => b.People)
+            .HasForeignKey(p => p.BusinessId)
+            // Keep the person record if their associated business is purged —
+            // the LinkedIn data still stands on its own.
             .OnDelete(DeleteBehavior.SetNull);
     }
 }

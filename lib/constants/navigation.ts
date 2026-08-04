@@ -11,6 +11,7 @@ import {
   Send,
   Settings,
   ShieldCheck,
+  UserSearch,
   Users,
   type LucideIcon,
 } from 'lucide-react';
@@ -52,6 +53,13 @@ export const NAV_ITEMS: NavItem[] = [
     // only ever an export format.
     description: 'Your saved leads from the database',
     permission: 'leads.view',
+  },
+  {
+    href: '/people',
+    label: 'People',
+    icon: UserSearch,
+    description: 'Decision-makers found via LinkedIn search',
+    permission: 'people.view',
   },
   {
     href: '/email/compose',

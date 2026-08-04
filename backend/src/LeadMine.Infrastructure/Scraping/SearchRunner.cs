@@ -1,11 +1,14 @@
 using System.Text.Json;
 using System.Text.Json.Serialization;
 using LeadMine.Application.DTOs;
+using LeadMine.Domain.Entities;
 using LeadMine.Domain.Enums;
+using LeadMine.Infrastructure.Persistence;
 using LeadMine.Infrastructure.Scraping.Enrichment;
 using LeadMine.Infrastructure.Scraping.Providers;
 using LeadMine.Infrastructure.Scraping.Verification;
 using LeadMine.Infrastructure.Services;
+using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
@@ -32,6 +35,9 @@ public sealed class SearchRunner(
     GeocodingService geocoding,
     EnrichmentService enrichment,
     VerificationService verification,
+    ApifyMapsEnrichmentService mapsEnrichment,
+    ApifyLinkedInCompanyService linkedInCompany,
+    ApifyLinkedInPeopleService linkedInPeople,
     IOptionsMonitor<ScraperOptions> optionsMonitor,
     ILogger<SearchRunner> logger)
 {
@@ -247,6 +253,11 @@ public sealed class SearchRunner(
                 await EnrichAsync(state, leads, task, abort, stoppingToken);
             }
 
+            if ((state.Payload.EnrichGoogleMaps || state.Payload.EnrichLinkedIn) && leads.Count > 0)
+            {
+                await EnrichWithApifyAsync(state, leads, task, abort, stoppingToken);
+            }
+
             foreach (var lead in leads)
             {
                 if (ct.IsCancellationRequested) break;
@@ -293,6 +304,16 @@ public sealed class SearchRunner(
             // Save before checkpointing, so a crash between the two re-runs the
             // task rather than losing its leads.
             await FlushAsync(state, stoppingToken);
+
+            // People search needs a real, saved Business id (it is the FK on
+            // Person), so it runs here — after the flush, against rows already
+            // in the database — rather than alongside the other enrichment
+            // steps above, which only ever see in-memory candidates.
+            if (state.Payload.EnrichLinkedIn && !ct.IsCancellationRequested)
+            {
+                await SearchLinkedInPeopleAsync(state, abort, stoppingToken);
+            }
+
             if (!await BeatAsync(state, abort, task.Key, stoppingToken)) break;
 
             if (state.Options.DelayMs > 0 && !ct.IsCancellationRequested)
@@ -459,6 +480,200 @@ public sealed class SearchRunner(
                     await BeatAsync(state, abort, null, stoppingToken);
                 }
             });
+    }
+
+    /// <summary>
+    /// Google Maps detail and LinkedIn company enrichment via Apify, opt-in
+    /// (<see cref="SearchRequestPayload.EnrichGoogleMaps"/>/
+    /// <see cref="SearchRequestPayload.EnrichLinkedIn"/>) since each call is a
+    /// billed Apify event. Runs on every lead regardless of whether it has a
+    /// website — unlike <see cref="EnrichAsync"/>, neither of these needs one.
+    /// <para>
+    /// Best-effort like the website crawl above: a failure on one lead (a
+    /// rate limit, nothing found, an actor hiccup) is logged and skipped, not
+    /// allowed to fail the task over what the rest of the batch still found.
+    /// </para>
+    /// </summary>
+    private async Task EnrichWithApifyAsync(
+        RunState state,
+        List<IngestLead> leads,
+        SearchTask task,
+        CancellationTokenSource abort,
+        CancellationToken stoppingToken)
+    {
+        var completed = 0;
+        var lastBeatTicks = DateTime.UtcNow.Ticks;
+        var beatInterval = TimeSpan.FromSeconds(15).Ticks;
+
+        await Parallel.ForEachAsync(
+            leads,
+            new ParallelOptions
+            {
+                MaxDegreeOfParallelism = state.Options.EnrichmentConcurrency,
+                CancellationToken = abort.Token,
+            },
+            async (lead, ct) =>
+            {
+                if (state.Payload.EnrichGoogleMaps)
+                {
+                    try
+                    {
+                        var maps = await mapsEnrichment.EnrichAsync(
+                            lead.Name, lead.City, lead.State, lead.Country, lead.MapsUrl, state.ProviderContext, ct);
+
+                        if (maps is not null)
+                        {
+                            if (maps.PostalCode is { } postalCode) lead.PostalCode = postalCode;
+                            if (maps.OpeningHoursJson is { } hours) lead.OpeningHoursJson = hours;
+                            if (maps.PlaceId is { } placeId) lead.PlaceId = placeId;
+                            if (maps.ImageUrlsJson is { } images) lead.ImageUrlsJson = images;
+                            if (maps.PermanentlyClosed.HasValue) lead.PermanentlyClosed = maps.PermanentlyClosed;
+                            if (maps.Rating.HasValue) lead.Rating = maps.Rating;
+                            if (maps.ReviewCount.HasValue) lead.ReviewCount = maps.ReviewCount;
+                        }
+
+                        lead.MapsEnrichedAt = DateTimeOffset.UtcNow;
+                    }
+                    catch (OperationCanceledException) when (ct.IsCancellationRequested)
+                    {
+                        throw;
+                    }
+                    catch (Exception ex)
+                    {
+                        logger.LogDebug(ex, "Google Maps (Apify) enrichment failed for {Name}", lead.Name);
+                    }
+                }
+
+                if (state.Payload.EnrichLinkedIn)
+                {
+                    try
+                    {
+                        var company = await linkedInCompany.EnrichAsync(lead.Name, lead.LinkedIn, state.ProviderContext, ct);
+
+                        if (company is not null)
+                        {
+                            if (company.Industry is { } industry) lead.Industry = industry;
+                            if (company.EmployeeCount.HasValue) lead.EmployeeCount = company.EmployeeCount;
+                            if (company.Description is { } description) lead.CompanyDescription = description;
+
+                            // The people-search phase after ingest needs this
+                            // URL, so it must land on the lead even though
+                            // Business already has a LinkedIn field for other
+                            // reasons (a link the website crawler happened to find).
+                            if (string.IsNullOrWhiteSpace(lead.LinkedIn) && company.LinkedInUrl is { } linkedInUrl)
+                            {
+                                lead.LinkedIn = linkedInUrl;
+                            }
+                        }
+
+                        lead.LinkedInEnrichedAt = DateTimeOffset.UtcNow;
+                    }
+                    catch (OperationCanceledException) when (ct.IsCancellationRequested)
+                    {
+                        throw;
+                    }
+                    catch (Exception ex)
+                    {
+                        logger.LogDebug(ex, "LinkedIn company enrichment (Apify) failed for {Name}", lead.Name);
+                    }
+                }
+
+                var done = Interlocked.Increment(ref completed);
+                state.CurrentTask = $"Enriching {task.CategoryLabel} in {task.City} with Apify ({done}/{leads.Count})";
+
+                var now = DateTime.UtcNow.Ticks;
+                var previous = Interlocked.Read(ref lastBeatTicks);
+
+                if (now - previous > beatInterval &&
+                    Interlocked.CompareExchange(ref lastBeatTicks, now, previous) == previous)
+                {
+                    await BeatAsync(state, abort, null, stoppingToken);
+                }
+            });
+    }
+
+    /// <summary>
+    /// Finds decision-makers at each company this task just saved, via
+    /// LinkedIn people search. Runs after the flush rather than alongside
+    /// <see cref="EnrichWithApifyAsync"/> because <c>Person.BusinessId</c> needs
+    /// a real, saved business id.
+    /// <para>
+    /// Scoped to this job (<c>SearchJobId</c>) and guarded by
+    /// <c>LastPeopleSearchedAt IS NULL</c> so a resumed run does not re-search
+    /// (and re-bill) a company it already covered on a prior attempt.
+    /// </para>
+    /// </summary>
+    private async Task SearchLinkedInPeopleAsync(
+        RunState state,
+        CancellationTokenSource abort,
+        CancellationToken stoppingToken)
+    {
+        var ct = abort.Token;
+
+        await using var scope = scopeFactory.CreateAsyncScope();
+        var db = scope.ServiceProvider.GetRequiredService<LeadMineDbContext>();
+
+        var pending = await db.Businesses
+            .Where(b => b.SearchJobId == state.JobId && b.LastPeopleSearchedAt == null && b.LinkedIn != "")
+            .ToListAsync(ct);
+
+        if (pending.Count == 0) return;
+
+        foreach (var business in pending)
+        {
+            if (ct.IsCancellationRequested) break;
+
+            try
+            {
+                var people = await linkedInPeople.SearchAsync(
+                    business.LinkedIn, state.Payload.MaxDecisionMakersPerCompany, state.ProviderContext, ct);
+
+                foreach (var person in people)
+                {
+                    db.People.Add(new Person
+                    {
+                        BusinessId = business.Id,
+                        CompanyName = business.Name,
+                        FullName = Truncate(person.FullName, 256) ?? string.Empty,
+                        JobTitle = Truncate(person.JobTitle, 256) ?? string.Empty,
+                        Headline = Truncate(person.Headline, 512) ?? string.Empty,
+                        LinkedInUrl = Truncate(person.LinkedInUrl, 512) ?? string.Empty,
+                        Location = Truncate(person.Location, 256) ?? string.Empty,
+                        ExperienceJson = person.ExperienceJson ?? string.Empty,
+                        EducationJson = person.EducationJson ?? string.Empty,
+                        SkillsJson = person.SkillsJson ?? string.Empty,
+                        IsDecisionMaker = person.IsDecisionMaker,
+                        DecisionMakerRole = Truncate(person.DecisionMakerRole, 256) ?? string.Empty,
+                        OwnerUserId = state.OwnerUserId,
+                        SearchJobId = state.JobId,
+                    });
+                }
+            }
+            catch (OperationCanceledException) when (ct.IsCancellationRequested)
+            {
+                break;
+            }
+            catch (Exception ex)
+            {
+                // Best-effort, same as every other enrichment step: one
+                // company's search failing should not lose the rest.
+                logger.LogDebug(ex, "LinkedIn people search (Apify) failed for {Name}", business.Name);
+            }
+
+            business.LastPeopleSearchedAt = DateTimeOffset.UtcNow;
+
+            state.CurrentTask = $"Searching LinkedIn for decision-makers at {business.Name}";
+            await BeatAsync(state, abort, null, stoppingToken);
+        }
+
+        try
+        {
+            await db.SaveChangesAsync(ct);
+        }
+        catch (Exception ex)
+        {
+            logger.LogError(ex, "Failed to save LinkedIn people results for job {JobId}", state.JobId);
+        }
     }
 
     // --- persistence --------------------------------------------------------

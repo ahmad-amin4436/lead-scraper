@@ -100,4 +100,47 @@ public class Business : AuditableEntity
     public DateTimeOffset? LastWhatsAppContactedAt { get; set; }
 
     public int WhatsAppTimesContacted { get; set; }
+
+    // --- Google Maps enrichment (Apify) --------------------------------------
+    // Filled in after discovery, not by it: Google Places already supplies
+    // Rating/ReviewCount/MapsUrl at discovery time, and this step refreshes
+    // those plus the detail Places' Text Search doesn't return.
+
+    public string PostalCode { get; set; } = string.Empty;
+
+    /// <summary>Serialized <c>[{"day":"Monday","hours":"9 AM to 5 PM"}, ...]</c>.</summary>
+    public string OpeningHoursJson { get; set; } = string.Empty;
+
+    /// <summary>The Maps place id, as Apify's actor returns it (not Google's own Place ID format).</summary>
+    public string PlaceId { get; set; } = string.Empty;
+
+    /// <summary>Serialized array of image URLs. No blobs stored — links only.</summary>
+    public string ImageUrlsJson { get; set; } = string.Empty;
+
+    public bool? PermanentlyClosed { get; set; }
+
+    public DateTimeOffset? LastMapsEnrichedAt { get; set; }
+
+    // --- LinkedIn company enrichment (Apify) ---------------------------------
+
+    public string Industry { get; set; } = string.Empty;
+
+    public int? EmployeeCount { get; set; }
+
+    /// <summary>LinkedIn's own company description, distinct from the user-authored <see cref="Notes"/>.</summary>
+    public string CompanyDescription { get; set; } = string.Empty;
+
+    public DateTimeOffset? LastLinkedInEnrichedAt { get; set; }
+
+    /// <summary>
+    /// Set once LinkedIn people search has run for this company. Distinct from
+    /// <see cref="LastLinkedInEnrichedAt"/> (company-level detail, filled in
+    /// before the lead is even saved) because people search runs in a separate
+    /// phase afterward — against the business's real, saved id — and this is
+    /// what stops it re-running for the same company if a run is resumed.
+    /// </summary>
+    public DateTimeOffset? LastPeopleSearchedAt { get; set; }
+
+    /// <summary>Decision-makers found at this company via LinkedIn people search.</summary>
+    public ICollection<Person> People { get; set; } = new List<Person>();
 }

@@ -1,8 +1,10 @@
 'use client';
 
 import * as React from 'react';
+import Link from 'next/link';
 import {
   AtSign,
+  ExternalLink,
   Globe,
   MapPin,
   MoreHorizontal,
@@ -22,6 +24,7 @@ import {
 import { PageHeader } from '@/components/shared/page-header';
 import { useAuth } from '@/components/providers/auth-provider';
 import { LEAD_KIND_OPTIONS } from '@/lib/constants/lead-kinds';
+import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
 import { Checkbox } from '@/components/ui/checkbox';
@@ -197,6 +200,31 @@ function LeadForm({ initial, submitting, error, onCancel, onSubmit }: LeadFormPr
         <Label htmlFor="lead-notes">Notes</Label>
         <Textarea id="lead-notes" {...register('notes')} />
       </div>
+
+      {initial && (initial.industry || initial.employeeCount || initial.companyDescription || initial.postalCode) && (
+        <div className="space-y-2 rounded-lg border border-border bg-muted/40 p-3">
+          <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
+            Enrichment (Apify) — read-only
+          </p>
+          <div className="flex flex-wrap gap-1.5">
+            {initial.industry && <Badge variant="secondary">{initial.industry}</Badge>}
+            {initial.employeeCount != null && (
+              <Badge variant="secondary">{formatNumber(initial.employeeCount)} employees</Badge>
+            )}
+            {initial.postalCode && <Badge variant="secondary">{initial.postalCode}</Badge>}
+          </div>
+          {initial.companyDescription && (
+            <p className="line-clamp-3 text-xs text-muted-foreground">{initial.companyDescription}</p>
+          )}
+          <Link
+            href={`/people?businessId=${initial.id}`}
+            className="inline-flex items-center gap-1 text-xs font-medium text-primary hover:underline"
+          >
+            <ExternalLink className="size-3" />
+            View decision-makers found for this company
+          </Link>
+        </div>
+      )}
 
       <DialogFooter className="mt-2">
         <Button type="button" variant="outline" onClick={onCancel}>

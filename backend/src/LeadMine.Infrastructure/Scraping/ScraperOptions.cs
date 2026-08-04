@@ -102,6 +102,12 @@ public sealed class ScraperOptions
     /// </summary>
     public string ApifyActorId { get; set; } = "compass~crawler-google-places";
 
+    /// <summary>LinkedIn company-detail actor. See <see cref="ApifyActorId"/> for the format.</summary>
+    public string ApifyLinkedInCompanyActorId { get; set; } = "harvestapi~linkedin-company";
+
+    /// <summary>LinkedIn company-employees search actor. See <see cref="ApifyActorId"/> for the format.</summary>
+    public string ApifyLinkedInPeopleActorId { get; set; } = "harvestapi~linkedin-company-employees";
+
     /// <summary>
     /// Wall-clock budget for one Apify actor run (start → finish), not the
     /// timeout of any single HTTP call. Scraping Google Maps is far slower than

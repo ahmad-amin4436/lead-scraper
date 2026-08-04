@@ -66,6 +66,30 @@ public sealed class IngestLead
 
     public BusinessSource Source { get; set; } = BusinessSource.Manual;
     public BusinessStatus Status { get; set; } = BusinessStatus.New;
+
+    // --- Google Maps enrichment (Apify), populated only when requested ------
+
+    [MaxLength(32)] public string PostalCode { get; set; } = string.Empty;
+    public string OpeningHoursJson { get; set; } = string.Empty;
+    [MaxLength(256)] public string PlaceId { get; set; } = string.Empty;
+    public string ImageUrlsJson { get; set; } = string.Empty;
+    public bool? PermanentlyClosed { get; set; }
+
+    /// <summary>
+    /// Set by the worker when the Maps enrichment step was attempted for this
+    /// lead, regardless of whether it found anything — distinguishes "ran and
+    /// found nothing" from "never ran".
+    /// </summary>
+    public DateTimeOffset? MapsEnrichedAt { get; set; }
+
+    // --- LinkedIn company enrichment (Apify), populated only when requested -
+
+    [MaxLength(256)] public string Industry { get; set; } = string.Empty;
+    public int? EmployeeCount { get; set; }
+    public string CompanyDescription { get; set; } = string.Empty;
+
+    /// <summary>Same "attempted, not just found" meaning as <see cref="MapsEnrichedAt"/>.</summary>
+    public DateTimeOffset? LinkedInEnrichedAt { get; set; }
 }
 
 public sealed class IngestResultDto

@@ -132,6 +132,16 @@ public sealed class LeadIngestService(
             Status = lead.Status,
             OwnerUserId = ownerId,
             SearchJobId = jobId,
+            PostalCode = lead.PostalCode.Trim(),
+            OpeningHoursJson = lead.OpeningHoursJson,
+            PlaceId = lead.PlaceId.Trim(),
+            ImageUrlsJson = lead.ImageUrlsJson,
+            PermanentlyClosed = lead.PermanentlyClosed,
+            LastMapsEnrichedAt = lead.MapsEnrichedAt,
+            Industry = lead.Industry.Trim(),
+            EmployeeCount = lead.EmployeeCount,
+            CompanyDescription = lead.CompanyDescription.Trim(),
+            LastLinkedInEnrichedAt = lead.LinkedInEnrichedAt,
         };
 
         BusinessService.ApplyDedupeKeys(entity);

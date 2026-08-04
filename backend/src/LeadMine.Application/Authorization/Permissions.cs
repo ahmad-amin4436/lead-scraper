@@ -78,6 +78,20 @@ public static class Permissions
         public const string ManageTemplates = "whatsapp.manage-templates";
     }
 
+    [PermissionGroup("People")]
+    public static class People
+    {
+        [PermissionDescription("View decision-makers found via LinkedIn search")]
+        public const string View = "people.view";
+
+        [PermissionDescription("Delete or edit people records")]
+        public const string Manage = "people.manage";
+
+        /// <summary>Mirrors <see cref="Leads.ViewAll"/> — without it, scoped to the caller's own.</summary>
+        [PermissionDescription("See people found by every user, not just your own")]
+        public const string ViewAll = "people.view-all";
+    }
+
     [PermissionGroup("Searches")]
     public static class Searches
     {

@@ -64,14 +64,27 @@ export function resolveProvider(
   return openStreetMapProvider;
 }
 
+/**
+ * Data sources not offered in the "Data source" dropdown — not because they
+ * don't work, but because the current search pipeline uses Google Places as
+ * the sole discovery engine, with Google Maps/LinkedIn as opt-in enrichment
+ * toggles instead (see the "Enrichment (Apify)" section of the search form).
+ * Picking one of these as the *discovery* provider would double up with that
+ * design rather than complement it. The backend still understands both ids,
+ * so this is a presentation choice, not a removal.
+ */
+const HIDDEN_FROM_DROPDOWN = new Set<BusinessSource>(['apify', 'apify-parallel']);
+
 export function listProviders(settings: AppSettings): {
   id: BusinessSource;
   label: string;
   ready: boolean;
   reason: string | null;
 }[] {
-  return Object.values(PROVIDERS).map((provider) => {
-    const reason = provider.readiness(settings);
-    return { id: provider.id, label: provider.label, ready: reason === null, reason };
-  });
+  return Object.values(PROVIDERS)
+    .filter((provider) => !HIDDEN_FROM_DROPDOWN.has(provider.id))
+    .map((provider) => {
+      const reason = provider.readiness(settings);
+      return { id: provider.id, label: provider.label, ready: reason === null, reason };
+    });
 }

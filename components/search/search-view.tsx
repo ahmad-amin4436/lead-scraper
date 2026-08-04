@@ -110,6 +110,10 @@ export function SearchView() {
       minReviews: rerun?.minReviews ?? persisted?.minReviews,
       leadKind: rerun?.leadKind ?? persisted?.leadKind ?? 'Any',
       provider: rerun?.provider ?? persisted?.provider ?? config.defaultProvider,
+      enrichGoogleMaps: rerun?.enrichGoogleMaps ?? persisted?.enrichGoogleMaps ?? false,
+      enrichLinkedIn: rerun?.enrichLinkedIn ?? persisted?.enrichLinkedIn ?? false,
+      maxDecisionMakersPerCompany:
+        rerun?.maxDecisionMakersPerCompany ?? persisted?.maxDecisionMakersPerCompany ?? 3,
     };
   }, [settings.data, rerun, persisted]);
 

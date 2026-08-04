@@ -535,5 +535,15 @@ public sealed partial class BusinessService(
         Status = b.Status,
         Notes = b.Notes,
         CreatedAt = b.CreatedAt,
+        PostalCode = b.PostalCode,
+        OpeningHoursJson = b.OpeningHoursJson,
+        PlaceId = b.PlaceId,
+        ImageUrlsJson = b.ImageUrlsJson,
+        PermanentlyClosed = b.PermanentlyClosed,
+        LastMapsEnrichedAt = b.LastMapsEnrichedAt,
+        Industry = b.Industry,
+        EmployeeCount = b.EmployeeCount,
+        CompanyDescription = b.CompanyDescription,
+        LastLinkedInEnrichedAt = b.LastLinkedInEnrichedAt,
     };
 }

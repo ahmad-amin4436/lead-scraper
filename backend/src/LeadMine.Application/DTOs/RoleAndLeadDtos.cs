@@ -85,6 +85,20 @@ public sealed class BusinessDto
     public BusinessStatus Status { get; set; }
     public string Notes { get; set; } = string.Empty;
     public DateTimeOffset CreatedAt { get; set; }
+
+    // --- Google Maps enrichment (Apify) --------------------------------------
+    public string PostalCode { get; set; } = string.Empty;
+    public string OpeningHoursJson { get; set; } = string.Empty;
+    public string PlaceId { get; set; } = string.Empty;
+    public string ImageUrlsJson { get; set; } = string.Empty;
+    public bool? PermanentlyClosed { get; set; }
+    public DateTimeOffset? LastMapsEnrichedAt { get; set; }
+
+    // --- LinkedIn company enrichment (Apify) ---------------------------------
+    public string Industry { get; set; } = string.Empty;
+    public int? EmployeeCount { get; set; }
+    public string CompanyDescription { get; set; } = string.Empty;
+    public DateTimeOffset? LastLinkedInEnrichedAt { get; set; }
 }
 
 public sealed class CreateBusinessRequest

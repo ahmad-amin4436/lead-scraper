@@ -51,6 +51,27 @@ public sealed class SearchRequestPayload
     [JsonPropertyName("provider")]
     public string? Provider { get; set; }
 
+    /// <summary>
+    /// Enrich each discovered lead with Apify's Google Maps detail (opening
+    /// hours, postal code, images, a fresher rating/review count) on top of
+    /// what Google Places' Text Search already returned. Opt-in: unlike
+    /// enrichment, each call is a billed Apify event.
+    /// </summary>
+    [JsonPropertyName("enrichGoogleMaps")]
+    public bool EnrichGoogleMaps { get; set; }
+
+    /// <summary>
+    /// Enrich each discovered lead's company with LinkedIn data (industry,
+    /// employee count, description), then search LinkedIn for decision-makers
+    /// at that company. Opt-in for the same reason as <see cref="EnrichGoogleMaps"/>.
+    /// </summary>
+    [JsonPropertyName("enrichLinkedIn")]
+    public bool EnrichLinkedIn { get; set; }
+
+    /// <summary>Cap on LinkedIn people-search results kept per company.</summary>
+    [JsonPropertyName("maxDecisionMakersPerCompany")]
+    public int MaxDecisionMakersPerCompany { get; set; } = 3;
+
     /// <summary>Every (city × category) pair this run will sweep.</summary>
     public IEnumerable<(string City, string Category, string Key)> EnumerateTasks()
     {
