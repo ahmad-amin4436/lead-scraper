@@ -145,6 +145,7 @@ public static class DependencyInjection
         services.AddScoped<IRoleService, RoleService>();
         services.AddScoped<IBusinessService, BusinessService>();
         services.AddScoped<IPersonService, PersonService>();
+        services.AddScoped<ILinkedInEnrichmentService, LinkedInEnrichmentService>();
 
         services.AddOptions<SmtpOptions>()
             .Bind(configuration.GetSection(SmtpOptions.SectionName));

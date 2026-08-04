@@ -35,6 +35,8 @@ export interface BackendBusinessQuery {
   hasBeenContacted?: boolean;
   /** Same idea as hasBeenContacted, tracked independently for WhatsApp. */
   hasBeenWhatsAppContacted?: boolean;
+  /** Same idea as hasBeenContacted, tracked independently for LinkedIn enrichment. */
+  hasBeenLinkedInEnriched?: boolean;
   minRating?: number;
   page?: number;
   pageSize?: number;

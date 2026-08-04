@@ -159,6 +159,13 @@ public sealed partial class BusinessService(
                 : query.Where(b => b.LastWhatsAppContactedAt == null);
         }
 
+        if (request.HasBeenLinkedInEnriched.HasValue)
+        {
+            query = request.HasBeenLinkedInEnriched.Value
+                ? query.Where(b => b.LastLinkedInEnrichedAt != null)
+                : query.Where(b => b.LastLinkedInEnrichedAt == null);
+        }
+
         return query;
     }
 

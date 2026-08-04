@@ -187,6 +187,13 @@ public sealed class BusinessQueryRequest
     public bool? HasBeenWhatsAppContacted { get; set; }
 
     /// <summary>
+    /// Same idea as <see cref="HasBeenContacted"/> but for LinkedIn enrichment
+    /// (<c>LastLinkedInEnrichedAt</c>) — lets the LinkedIn Enrichment page
+    /// exclude leads already enriched, since each run is a billed Apify event.
+    /// </summary>
+    public bool? HasBeenLinkedInEnriched { get; set; }
+
+    /// <summary>
     /// Admin-only. Restricts the list to one user's leads. Ignored — and the
     /// caller forced to their own rows — without `leads.view-all`.
     /// </summary>

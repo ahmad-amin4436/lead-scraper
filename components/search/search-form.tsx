@@ -61,7 +61,6 @@ export function SearchForm({ defaults, providers, submitting, disabled, onSubmit
   const state = useWatch({ control, name: 'state' });
   const provider = useWatch({ control, name: 'provider' });
   const leadKind = useWatch({ control, name: 'leadKind' });
-  const enrichLinkedIn = useWatch({ control, name: 'enrichLinkedIn' });
 
   const countryOptions = React.useMemo(() => getCountryOptions(), []);
   const stateOptions = React.useMemo(() => getStateOptions(country), [country]);
@@ -478,8 +477,10 @@ export function SearchForm({ defaults, providers, submitting, disabled, onSubmit
         <CardHeader>
           <CardTitle>Enrichment (Apify)</CardTitle>
           <CardDescription>
-            Optional, deeper enrichment for each lead. Unlike the options above, every one of these
-            is a billed Apify event — leave them off unless you need the extra detail.
+            Optional, deeper enrichment for each lead — a billed Apify event, so leave it off unless
+            you need the extra detail. (LinkedIn enrichment moved to its own page — see LinkedIn
+            Enrichment in the nav — since it runs against leads you already have, not just new ones
+            from this search.)
           </CardDescription>
         </CardHeader>
         <CardContent className="space-y-4">
@@ -504,61 +505,6 @@ export function SearchForm({ defaults, providers, submitting, disabled, onSubmit
               </label>
             )}
           />
-
-          <Controller
-            control={control}
-            name="enrichLinkedIn"
-            render={({ field }) => (
-              <label className="flex cursor-pointer items-start justify-between gap-4">
-                <span className="space-y-0.5">
-                  <span className="block text-sm font-medium">Enrich with LinkedIn</span>
-                  <span className="block text-xs text-muted-foreground">
-                    Adds company detail (industry, size, description) and searches LinkedIn for
-                    decision-makers at each company — owners, founders, directors. Found people
-                    appear under People, linked to the lead.
-                  </span>
-                </span>
-                <Switch
-                  checked={field.value}
-                  onCheckedChange={field.onChange}
-                  disabled={disabled}
-                  aria-label="Enrich with LinkedIn"
-                />
-              </label>
-            )}
-          />
-
-          {enrichLinkedIn && (
-            <div className="max-w-xs space-y-2 pl-1">
-              <Label htmlFor="maxDecisionMakersPerCompany">Decision-makers per company</Label>
-              <Controller
-                control={control}
-                name="maxDecisionMakersPerCompany"
-                render={({ field }) => (
-                  <Input
-                    id="maxDecisionMakersPerCompany"
-                    type="number"
-                    inputMode="numeric"
-                    min={1}
-                    max={50}
-                    step={1}
-                    disabled={disabled}
-                    value={Number.isFinite(field.value) ? field.value : ''}
-                    onChange={(event) =>
-                      field.onChange(
-                        event.target.value === '' ? undefined : Number(event.target.value),
-                      )
-                    }
-                  />
-                )}
-              />
-              {errors.maxDecisionMakersPerCompany && (
-                <p className="text-xs text-destructive">
-                  {errors.maxDecisionMakersPerCompany.message}
-                </p>
-              )}
-            </div>
-          )}
         </CardContent>
       </Card>
 

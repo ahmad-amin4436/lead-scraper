@@ -120,8 +120,8 @@ public sealed class SearchRunner(
         }
 
         // Once true, a Google quota failure has already downgraded this run to
-        // OpenStreetMap for good — no point trying Google again this attempt.
-        var switchedToOpenStreetMap = false;
+        // the fallback provider for good — no point trying Google again this attempt.
+        var switchedFallback = false;
 
         // Builds the query for the current loop iteration; declared once so the
         // primary attempt and the post-fallback retry construct it identically.
@@ -192,20 +192,39 @@ public sealed class SearchRunner(
                 await CompleteAsync(state.JobId, state.WorkerId, SearchJobStatus.Failed, ex.Message, stoppingToken);
                 return;
             }
-            catch (ProviderException ex) when (ex.Failure == ProviderFailure.QuotaExceeded && !switchedToOpenStreetMap)
+            catch (ProviderException ex) when (ex.Failure == ProviderFailure.QuotaExceeded && !switchedFallback)
             {
-                // A billed provider running dry does not mean the free,
-                // unmetered one is also out of road. Switch once for the rest
-                // of the sweep, and retry this same task immediately on the new
+                // A billed provider running dry does not mean every other
+                // source is also out of road. Switch once for the rest of the
+                // sweep, and retry this same task immediately on the new
                 // provider rather than letting the switch itself cost a task.
-                switchedToOpenStreetMap = true;
-                provider = providers.Select(ProviderRegistry.OpenStreetMapId, state.ProviderContext);
+                switchedFallback = true;
+
+                // Google Maps via Apify first — it is the closer substitute
+                // for Google Places' data. OpenStreetMap is the last resort,
+                // used only if Apify itself cannot run (no token configured),
+                // so a quota exhaustion never leaves the sweep with nothing.
+                string fallbackId;
+                string fallbackLabel;
+
+                try
+                {
+                    provider = providers.Select(ProviderRegistry.ApifyId, state.ProviderContext);
+                    fallbackId = ProviderRegistry.ApifyId;
+                    fallbackLabel = "Google Maps (Apify)";
+                }
+                catch (ProviderException)
+                {
+                    provider = providers.Select(ProviderRegistry.OpenStreetMapId, state.ProviderContext);
+                    fallbackId = ProviderRegistry.OpenStreetMapId;
+                    fallbackLabel = "OpenStreetMap";
+                }
 
                 logger.LogWarning(
-                    ex, "Google Places quota exhausted on job {JobId}; switching to OpenStreetMap for the rest of the run",
-                    state.JobId);
+                    ex, "Google Places quota exhausted on job {JobId}; switching to {Fallback} for the rest of the run",
+                    state.JobId, fallbackId);
 
-                state.CurrentTask = "Google Places quota exceeded — switching to OpenStreetMap";
+                state.CurrentTask = $"Google Places quota exceeded — switching to {fallbackLabel}";
                 await BeatAsync(state, abort, null, stoppingToken);
 
                 try
@@ -223,7 +242,7 @@ public sealed class SearchRunner(
                     state.TasksFailed++;
                     state.LastTaskError = retryEx.Message;
 
-                    logger.LogWarning(retryEx, "Task {Key} failed on the OpenStreetMap fallback too", task.Key);
+                    logger.LogWarning(retryEx, "Task {Key} failed on the {Fallback} fallback too", task.Key, fallbackId);
 
                     await BeatAsync(state, abort, task.Key, stoppingToken);
                     continue;

@@ -1,4 +1,5 @@
 import {
+  Contact2,
   Database,
   Download,
   FileClock,
@@ -60,6 +61,13 @@ export const NAV_ITEMS: NavItem[] = [
     icon: UserSearch,
     description: 'Decision-makers found via LinkedIn search',
     permission: 'people.view',
+  },
+  {
+    href: '/linkedin',
+    label: 'LinkedIn Enrichment',
+    icon: Contact2,
+    description: 'Add company detail and find decision-makers for leads you have',
+    permission: 'people.manage',
   },
   {
     href: '/email/compose',
