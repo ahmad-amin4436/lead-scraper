@@ -1,6 +1,6 @@
 import '@/lib/server-guard';
 
-import { BUSINESS_COLUMNS, type BusinessRecord } from '@/types/business';
+import { BUSINESS_COLUMNS, WHATSAPP_STATUS_LABELS, type BusinessRecord } from '@/types/business';
 import type { ExportTemplate } from '@/types/export';
 import { normalizeHost } from '@/utils/normalize';
 
@@ -14,6 +14,10 @@ const leadmineColumns: TemplateColumn[] = BUSINESS_COLUMNS.map((column) => ({
   header: column.header,
   width: column.width,
   value: (record) => {
+    if (column.key === 'whatsappStatus') {
+      return WHATSAPP_STATUS_LABELS[record.whatsappStatus] ?? record.whatsappStatus;
+    }
+
     const raw = record[column.key];
     return raw === null || raw === undefined ? '' : (raw as string | number);
   },
@@ -27,7 +31,7 @@ const hubspotColumns: TemplateColumn[] = [
   { header: 'Email', width: 30, value: (r) => r.email },
   { header: 'Email Status', width: 14, value: (r) => r.emailStatus || 'unverified' },
   { header: 'Phone number', width: 20, value: (r) => r.phone },
-  { header: 'WhatsApp Status', width: 16, value: (r) => r.whatsappStatus || 'unverified' },
+  { header: 'WhatsApp Status', width: 16, value: (r) => WHATSAPP_STATUS_LABELS[r.whatsappStatus] ?? 'Unchecked' },
   { header: 'Street address', width: 42, value: (r) => r.address },
   { header: 'City', width: 18, value: (r) => r.city },
   { header: 'State/Region', width: 18, value: (r) => r.state },
@@ -48,7 +52,7 @@ const salesforceColumns: TemplateColumn[] = [
   { header: 'Email', width: 30, value: (r) => r.email },
   { header: 'Email Status', width: 14, value: (r) => r.emailStatus || 'unverified' },
   { header: 'Phone', width: 20, value: (r) => r.phone },
-  { header: 'WhatsApp Status', width: 16, value: (r) => r.whatsappStatus || 'unverified' },
+  { header: 'WhatsApp Status', width: 16, value: (r) => WHATSAPP_STATUS_LABELS[r.whatsappStatus] ?? 'Unchecked' },
   { header: 'Website', width: 32, value: (r) => r.website },
   { header: 'Street', width: 42, value: (r) => r.address },
   { header: 'City', width: 18, value: (r) => r.city },

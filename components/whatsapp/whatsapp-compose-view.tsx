@@ -4,6 +4,7 @@ import * as React from 'react';
 import { ExternalLink, Eye, Link2, MessageCircle, Search, TriangleAlert } from 'lucide-react';
 import { toast } from 'sonner';
 
+import { BackendWhatsAppStatusBadge } from '@/components/admin/status-badges';
 import { PageHeader } from '@/components/shared/page-header';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -249,12 +250,9 @@ export function WhatsAppComposeView() {
                           </span>
                         </span>
                         {row.whatsAppStatus && (
-                          <Badge
-                            variant={row.whatsAppStatus === 'Confirmed' ? 'success' : 'muted'}
-                            className="shrink-0"
-                          >
-                            {row.whatsAppStatus}
-                          </Badge>
+                          <span className="shrink-0">
+                            <BackendWhatsAppStatusBadge status={row.whatsAppStatus} />
+                          </span>
                         )}
                       </label>
                     </li>
