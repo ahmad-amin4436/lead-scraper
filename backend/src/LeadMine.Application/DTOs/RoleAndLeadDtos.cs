@@ -157,6 +157,14 @@ public sealed class BusinessQueryRequest
     public bool? HasWebsite { get; set; }
 
     /// <summary>
+    /// True: only leads with a prior send (<c>LastContactedAt</c> set). False:
+    /// only leads never contacted. Null: no filter. Exists mainly for the send
+    /// screen, so a user can exclude leads they already emailed instead of
+    /// re-sending and burning the daily cap on a repeat.
+    /// </summary>
+    public bool? HasBeenContacted { get; set; }
+
+    /// <summary>
     /// Admin-only. Restricts the list to one user's leads. Ignored — and the
     /// caller forced to their own rows — without `leads.view-all`.
     /// </summary>

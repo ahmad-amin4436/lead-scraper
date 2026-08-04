@@ -145,6 +145,13 @@ public sealed partial class BusinessService(
             query = request.HasWebsite.Value ? query.Where(b => b.Website != "") : query.Where(b => b.Website == "");
         }
 
+        if (request.HasBeenContacted.HasValue)
+        {
+            query = request.HasBeenContacted.Value
+                ? query.Where(b => b.LastContactedAt != null)
+                : query.Where(b => b.LastContactedAt == null);
+        }
+
         return query;
     }
 

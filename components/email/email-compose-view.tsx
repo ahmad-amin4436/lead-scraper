@@ -45,10 +45,14 @@ const INHERIT = '__inherit__';
  *
  * Only leads that actually carry an email address are offered — the list is
  * filtered server-side with `kind=EmailOnly`, so the user is never selecting
- * recipients that would silently be skipped.
+ * recipients that would silently be skipped. Leads already emailed (tracked via
+ * `LastContactedAt`, set by every successful send) are hidden by default via
+ * `hasBeenContacted=false`, so re-running this page doesn't re-select someone
+ * already contacted and waste a send against the daily cap.
  */
 export function EmailComposeView() {
   const [search, setSearch] = React.useState('');
+  const [hideContacted, setHideContacted] = React.useState(true);
   const [templateId, setTemplateId] = React.useState<string>('');
   const [signatureId, setSignatureId] = React.useState<string>(INHERIT);
   const [selected, setSelected] = React.useState<Set<string>>(new Set());
@@ -60,6 +64,9 @@ export function EmailComposeView() {
     search: debouncedSearch || undefined,
     // Recipients must have somewhere to send to.
     kind: 'EmailOnly',
+    // On by default: a lead already emailed shouldn't be re-selected by
+    // accident and burn a send against the daily cap on a repeat.
+    hasBeenContacted: hideContacted ? false : undefined,
     page: 1,
     pageSize: PAGE_SIZE,
     sortBy: 'createdAt',
@@ -180,6 +187,14 @@ export function EmailComposeView() {
               />
             </div>
 
+            <label className="flex cursor-pointer items-center gap-2 text-sm text-muted-foreground">
+              <Checkbox
+                checked={hideContacted}
+                onCheckedChange={(value) => setHideContacted(value === true)}
+              />
+              Hide leads already emailed
+            </label>
+
             {leads.isPending ? (
               <div className="space-y-2">
                 {Array.from({ length: 6 }, (_, index) => (
@@ -189,8 +204,12 @@ export function EmailComposeView() {
             ) : rows.length === 0 ? (
               <EmptyState
                 icon={<Mail />}
-                title="No emailable leads"
-                description="Run a search with contact enrichment on to collect email addresses."
+                title={hideContacted ? 'Nothing left to email' : 'No emailable leads'}
+                description={
+                  hideContacted
+                    ? 'Every lead with an email address has already been sent this. Uncheck "Hide leads already emailed" to see them.'
+                    : 'Run a search with contact enrichment on to collect email addresses.'
+                }
               />
             ) : (
               <>

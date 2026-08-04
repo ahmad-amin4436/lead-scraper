@@ -31,6 +31,8 @@ export interface BackendBusinessQuery {
   hasEmail?: boolean;
   hasPhone?: boolean;
   hasWebsite?: boolean;
+  /** True: only leads already emailed. False: only leads never emailed. */
+  hasBeenContacted?: boolean;
   minRating?: number;
   page?: number;
   pageSize?: number;
