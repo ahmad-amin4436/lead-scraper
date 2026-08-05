@@ -86,7 +86,7 @@ public sealed class BusinessDto
     public string Notes { get; set; } = string.Empty;
     public DateTimeOffset CreatedAt { get; set; }
 
-    // --- Google Maps enrichment (Apify) --------------------------------------
+    // --- Google Maps enrichment (browser) -------------------------------------
     public string PostalCode { get; set; } = string.Empty;
     public string OpeningHoursJson { get; set; } = string.Empty;
     public string PlaceId { get; set; } = string.Empty;
@@ -94,7 +94,7 @@ public sealed class BusinessDto
     public bool? PermanentlyClosed { get; set; }
     public DateTimeOffset? LastMapsEnrichedAt { get; set; }
 
-    // --- LinkedIn company enrichment (Apify) ---------------------------------
+    // --- LinkedIn company enrichment (browser) --------------------------------
     public string Industry { get; set; } = string.Empty;
     public int? EmployeeCount { get; set; }
     public string CompanyDescription { get; set; } = string.Empty;
@@ -189,7 +189,7 @@ public sealed class BusinessQueryRequest
     /// <summary>
     /// Same idea as <see cref="HasBeenContacted"/> but for LinkedIn enrichment
     /// (<c>LastLinkedInEnrichedAt</c>) — lets the LinkedIn Enrichment page
-    /// exclude leads already enriched, since each run is a billed Apify event.
+    /// exclude leads already enriched, since each run is a real browser session.
     /// </summary>
     public bool? HasBeenLinkedInEnriched { get; set; }
 

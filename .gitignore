@@ -69,4 +69,10 @@ backend/**/obj/
 # Visual Studio
 backend/.vs/
 **/*.csproj.user
+**/*.pubxml.user
+
+# Playwright browser downloads (hundreds of MB, redownloaded on first use)
+# and runtime-generated state — never commit a live LinkedIn session, it is
+# equivalent to a password. See backend/tools/LinkedInLogin/Program.cs.
+backend/**/App_Data/
 

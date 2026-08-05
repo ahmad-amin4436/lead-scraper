@@ -145,7 +145,6 @@ public static class DependencyInjection
         services.AddScoped<IRoleService, RoleService>();
         services.AddScoped<IBusinessService, BusinessService>();
         services.AddScoped<IPersonService, PersonService>();
-        services.AddScoped<ILinkedInEnrichmentService, LinkedInEnrichmentService>();
 
         services.AddOptions<SmtpOptions>()
             .Bind(configuration.GetSection(SmtpOptions.SectionName));
@@ -225,25 +224,8 @@ public static class DependencyInjection
                 PooledConnectionLifetime = TimeSpan.FromMinutes(5),
             });
 
-        // Apify platform calls (start run, poll status, fetch dataset). Each
-        // individual call is quick — the actor run itself is paced out as a
-        // poll loop in ApifyGoogleMapsProvider, not held open on this client.
-        services.AddHttpClient(ScraperHttpClients.Apify, client =>
-            {
-                client.Timeout = TimeSpan.FromSeconds(60);
-                client.DefaultRequestHeaders.Accept.ParseAdd("application/json");
-            })
-            .ConfigurePrimaryHttpMessageHandler(() => new SocketsHttpHandler
-            {
-                ConnectCallback = ScraperConnect.ConnectAsync,
-                AutomaticDecompression = DecompressionMethods.All,
-                PooledConnectionLifetime = TimeSpan.FromMinutes(5),
-            });
-
         services.AddSingleton<GooglePlacesProvider>();
         services.AddSingleton<OpenStreetMapProvider>();
-        services.AddSingleton<ApifyClient>();
-        services.AddSingleton<ApifyGoogleMapsProvider>();
         services.AddSingleton<ProviderRegistry>();
         services.AddSingleton<GeocodingService>();
 
@@ -251,9 +233,6 @@ public static class DependencyInjection
         services.AddSingleton<EnrichmentService>();
         services.AddSingleton<EmailVerifier>();
         services.AddSingleton<VerificationService>();
-        services.AddSingleton<ApifyMapsEnrichmentService>();
-        services.AddSingleton<ApifyLinkedInCompanyService>();
-        services.AddSingleton<ApifyLinkedInPeopleService>();
 
         // Owns the one shared Chromium process for every Playwright-backed
         // provider. Registered as its own interface-free singleton (not
@@ -263,10 +242,14 @@ public static class DependencyInjection
         services.AddSingleton<Scraping.Browser.PlaywrightBrowserManager>();
         services.AddSingleton<PlaywrightGoogleMapsProvider>();
         services.AddSingleton<PlaywrightMapsEnrichmentService>();
+        services.AddSingleton<Scraping.Browser.LinkedInSessionManager>();
+        services.AddSingleton<PlaywrightLinkedInCompanyService>();
+        services.AddSingleton<PlaywrightLinkedInPeopleService>();
 
         // Scoped: the runner opens its own short-lived scopes for database work,
         // so it must not outlive the scope the worker resolves it from.
         services.AddScoped<SearchRunner>();
+        services.AddScoped<LinkedInEnrichmentRunner>();
 
         services.AddHostedService<ScraperWorkerService>();
 

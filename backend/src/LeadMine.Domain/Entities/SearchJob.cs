@@ -16,6 +16,14 @@ public class SearchJob : AuditableEntity
 {
     public Guid Id { get; set; } = Guid.NewGuid();
 
+    /// <summary>
+    /// What this row runs — a category × city sweep or a LinkedIn enrichment
+    /// batch — so one queue/lease/checkpoint mechanism serves both instead of
+    /// duplicating it. Defaults to <see cref="JobKind.Search"/> so every row
+    /// created before this field existed is read the same way it always ran.
+    /// </summary>
+    public JobKind Kind { get; set; } = JobKind.Search;
+
     public SearchJobStatus Status { get; set; } = SearchJobStatus.Queued;
 
     /// <summary>The original request, stored as JSON for replay/rerun.</summary>

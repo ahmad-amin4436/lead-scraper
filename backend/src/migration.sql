@@ -1427,3 +1427,28 @@ GO
 COMMIT;
 GO
 
+BEGIN TRANSACTION;
+GO
+
+IF NOT EXISTS (
+    SELECT * FROM [__EFMigrationsHistory]
+    WHERE [MigrationId] = N'20260805102953_AddJobKind'
+)
+BEGIN
+    ALTER TABLE [SearchJobs] ADD [Kind] int NOT NULL DEFAULT 0;
+END;
+GO
+
+IF NOT EXISTS (
+    SELECT * FROM [__EFMigrationsHistory]
+    WHERE [MigrationId] = N'20260805102953_AddJobKind'
+)
+BEGIN
+    INSERT INTO [__EFMigrationsHistory] ([MigrationId], [ProductVersion])
+    VALUES (N'20260805102953_AddJobKind', N'8.0.11');
+END;
+GO
+
+COMMIT;
+GO
+

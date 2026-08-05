@@ -35,9 +35,9 @@ export interface SearchRequest {
   minRating?: number;
   minReviews?: number;
   provider?: BusinessSource;
-  /** Enrich each lead with Apify's Google Maps detail (hours, postal code, images). Billed per Apify event. */
+  /** Enrich each lead with Google Maps detail (hours, postal code) via a real browser session. */
   enrichGoogleMaps?: boolean;
-  /** Enrich each lead's company via LinkedIn, then search LinkedIn for decision-makers there. Billed per Apify event. */
+  /** Enrich each lead's company via LinkedIn, then search LinkedIn for decision-makers there, via a real browser session. */
   enrichLinkedIn?: boolean;
   /** Cap on LinkedIn people-search results kept per company. */
   maxDecisionMakersPerCompany?: number;

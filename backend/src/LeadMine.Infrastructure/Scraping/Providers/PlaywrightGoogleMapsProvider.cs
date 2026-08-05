@@ -21,11 +21,7 @@ public sealed class PlaywrightGoogleMapsProvider(
     /// <summary>Consecutive scrolls that add no new result before giving up on finding more.</summary>
     private const int MaxNoChangeScrolls = 3;
 
-    // Renamed to BusinessSource.GoogleMapsBrowser in Phase 3, together with the
-    // matching frontend type union — until then this keeps the wire format
-    // (JsonStringEnumConverter serializes the member name) in sync with what
-    // the Next.js side still expects.
-    public BusinessSource Source => BusinessSource.Apify;
+    public BusinessSource Source => BusinessSource.GoogleMapsBrowser;
 
     public string Label => "Google Maps (browser)";
 
@@ -208,7 +204,7 @@ public sealed class PlaywrightGoogleMapsProvider(
                 Rating = rating,
                 ReviewCount = reviewCount,
                 MapsUrl = page.Url,
-                Source = BusinessSource.Apify,
+                Source = BusinessSource.GoogleMapsBrowser,
             };
         }
         catch (Exception ex) when (ex is not OperationCanceledException)

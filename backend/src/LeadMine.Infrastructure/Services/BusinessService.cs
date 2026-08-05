@@ -257,13 +257,29 @@ public sealed partial class BusinessService(
         var entity = await ScopeToCaller(db.Businesses, null).FirstOrDefaultAsync(b => b.Id == id, ct);
         if (entity is null) return Result<BusinessDto>.NotFound("Lead not found.");
 
+        var hadEmail = !string.IsNullOrWhiteSpace(entity.Email);
+
         if (request.Name is not null) entity.Name = request.Name.Trim();
         if (request.Category is not null) entity.Category = request.Category.Trim();
         if (request.Phone is not null) entity.Phone = request.Phone.Trim();
         if (request.Email is not null) entity.Email = request.Email.Trim();
         if (request.Website is not null) entity.Website = request.Website.Trim();
         if (request.Notes is not null) entity.Notes = request.Notes.Trim();
-        if (request.Status.HasValue) entity.Status = request.Status.Value;
+
+        if (request.Status.HasValue)
+        {
+            entity.Status = request.Status.Value;
+        }
+        else if (!hadEmail && !string.IsNullOrWhiteSpace(entity.Email))
+        {
+            // Mirrors the automated crawler's own rule (EnrichmentService.Finish):
+            // a lead with an email is "Enriched" — whether that email was found
+            // by the crawler or just typed in by hand. Only fires when this edit
+            // is what added it, so an unrelated field edit on an already-New
+            // lead doesn't silently reclassify it.
+            entity.Status = BusinessStatus.Enriched;
+        }
+
         if (request.EmailStatus.HasValue) entity.EmailStatus = request.EmailStatus.Value;
         if (request.WhatsAppStatus.HasValue) entity.WhatsAppStatus = request.WhatsAppStatus.Value;
 

@@ -8,17 +8,18 @@ import { openStreetMapProvider } from './openstreetmap.provider';
 import type { SearchProvider } from './provider';
 
 /**
- * Google Maps (Apify) and its OSM-parallel variant run entirely in the .NET
- * backend's ProviderRegistry — actual scraping, the merge, and readiness
- * (whether Scraper:ApifyApiToken is configured) all happen there. This
- * Next.js-native registry has no visibility into that config, so `search`
- * here is intentionally unreachable: the real execution path never calls it
- * (see app/api/search/route.ts, which forwards the raw request to the .NET
- * API rather than running a provider in this process). `readiness` reports
- * optimistically; an unconfigured token surfaces as a specific run failure
- * instead of a pre-flight warning in this dropdown.
+ * Google Maps (browser) and its OSM-parallel variant run entirely in the .NET
+ * backend's ProviderRegistry — actual browser automation, the merge, and
+ * readiness (whether the shared host can launch Chromium — see
+ * PlaywrightBrowserManager) all happen there. This Next.js-native registry has
+ * no visibility into that, so `search` here is intentionally unreachable: the
+ * real execution path never calls it (see app/api/search/route.ts, which
+ * forwards the raw request to the .NET API rather than running a provider in
+ * this process). `readiness` reports optimistically; a browser that can't
+ * launch surfaces as a specific run failure instead of a pre-flight warning in
+ * this dropdown.
  */
-function apifyBackedProvider(id: 'apify' | 'apify-parallel', label: string): SearchProvider {
+function browserBackedProvider(id: 'browser' | 'browser-parallel', label: string): SearchProvider {
   return {
     id,
     label,
@@ -32,8 +33,8 @@ function apifyBackedProvider(id: 'apify' | 'apify-parallel', label: string): Sea
 const PROVIDERS: Record<Exclude<BusinessSource, 'manual'>, SearchProvider> = {
   'google-places': googlePlacesProvider,
   openstreetmap: openStreetMapProvider,
-  apify: apifyBackedProvider('apify', 'Google Maps (Apify)'),
-  'apify-parallel': apifyBackedProvider('apify-parallel', 'Google Maps + OpenStreetMap (parallel)'),
+  browser: browserBackedProvider('browser', 'Google Maps (browser)'),
+  'browser-parallel': browserBackedProvider('browser-parallel', 'Google Maps + OpenStreetMap (parallel)'),
 };
 
 export function getProvider(id: BusinessSource): SearchProvider {
@@ -68,12 +69,12 @@ export function resolveProvider(
  * Data sources not offered in the "Data source" dropdown — not because they
  * don't work, but because the current search pipeline uses Google Places as
  * the sole discovery engine, with Google Maps/LinkedIn as opt-in enrichment
- * toggles instead (see the "Enrichment (Apify)" section of the search form).
- * Picking one of these as the *discovery* provider would double up with that
- * design rather than complement it. The backend still understands both ids,
- * so this is a presentation choice, not a removal.
+ * toggles instead (see the "Enrichment" section of the search form). Picking
+ * one of these as the *discovery* provider would double up with that design
+ * rather than complement it. The backend still understands both ids, so this
+ * is a presentation choice, not a removal.
  */
-const HIDDEN_FROM_DROPDOWN = new Set<BusinessSource>(['apify', 'apify-parallel']);
+const HIDDEN_FROM_DROPDOWN = new Set<BusinessSource>(['browser', 'browser-parallel']);
 
 export function listProviders(settings: AppSettings): {
   id: BusinessSource;

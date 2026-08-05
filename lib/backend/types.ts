@@ -5,7 +5,7 @@
 
 // --- enums -----------------------------------------------------------------
 
-export type BackendSource = 'Manual' | 'GooglePlaces' | 'OpenStreetMap' | 'Apify';
+export type BackendSource = 'Manual' | 'GooglePlaces' | 'OpenStreetMap' | 'GoogleMapsBrowser';
 
 export type BackendStatus = 'New' | 'Enriched' | 'Partial' | 'NoWebsite' | 'EnrichmentFailed';
 
@@ -91,7 +91,7 @@ export interface BackendBusiness {
   notes: string;
   createdAt: string;
 
-  // Google Maps enrichment (Apify)
+  // Google Maps enrichment (browser)
   postalCode: string;
   openingHoursJson: string;
   placeId: string;
@@ -99,7 +99,7 @@ export interface BackendBusiness {
   permanentlyClosed: boolean | null;
   lastMapsEnrichedAt: string | null;
 
-  // LinkedIn company enrichment (Apify)
+  // LinkedIn company enrichment (browser)
   industry: string;
   employeeCount: number | null;
   companyDescription: string;

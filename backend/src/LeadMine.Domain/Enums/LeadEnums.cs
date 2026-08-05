@@ -8,12 +8,13 @@ public enum BusinessSource
     OpenStreetMap = 2,
 
     /// <summary>
-    /// Google Maps, scraped via an Apify actor. Also the tag used for a lead
-    /// found by both the Apify and OpenStreetMap parallel sweep and merged —
-    /// Apify's data is preferred on conflicts, so the merged record is tagged
-    /// the same as an Apify-only one.
+    /// Google Maps, scraped with a real browser (<c>PlaywrightGoogleMapsProvider</c>).
+    /// Also the tag used for a lead found by both the browser and OpenStreetMap
+    /// parallel sweep and merged — the browser source's data is preferred on
+    /// conflicts, so the merged record is tagged the same as a browser-only one.
+    /// <para>Formerly <c>Apify</c> (same underlying value <c>3</c>) — this app no longer uses Apify.</para>
     /// </summary>
-    Apify = 3,
+    GoogleMapsBrowser = 3,
 }
 
 /// <summary>Progress of contact discovery for a lead.</summary>
@@ -70,6 +71,26 @@ public enum SearchJobStatus
     Completed = 3,
     Failed = 4,
     Stopped = 5,
+}
+
+/// <summary>
+/// What a queued <see cref="Entities.SearchJob"/> actually runs — one shared
+/// queue/lease/checkpoint mechanism serves both, dispatched by
+/// <c>ScraperWorkerService</c> to a different runner per kind.
+/// </summary>
+public enum JobKind
+{
+    /// <summary>A category × city sweep, run by <c>SearchRunner</c>.</summary>
+    Search = 0,
+
+    /// <summary>
+    /// LinkedIn company + decision-maker enrichment for a fixed list of
+    /// already-saved leads, run by <c>LinkedInEnrichmentRunner</c>. Exists
+    /// because the synchronous version of this (one HTTP request enriching up
+    /// to 25 leads) structurally cannot finish inside a serverless proxy's
+    /// timeout — see the LinkedIn Enrichment page's history for why.
+    /// </summary>
+    LinkedInEnrichment = 1,
 }
 
 public enum ActivityLogLevel

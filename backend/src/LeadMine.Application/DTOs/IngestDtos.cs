@@ -67,7 +67,7 @@ public sealed class IngestLead
     public BusinessSource Source { get; set; } = BusinessSource.Manual;
     public BusinessStatus Status { get; set; } = BusinessStatus.New;
 
-    // --- Google Maps enrichment (Apify), populated only when requested ------
+    // --- Google Maps enrichment (browser), populated only when requested ----
 
     [MaxLength(32)] public string PostalCode { get; set; } = string.Empty;
     public string OpeningHoursJson { get; set; } = string.Empty;
@@ -82,7 +82,7 @@ public sealed class IngestLead
     /// </summary>
     public DateTimeOffset? MapsEnrichedAt { get; set; }
 
-    // --- LinkedIn company enrichment (Apify), populated only when requested -
+    // --- LinkedIn company enrichment (browser), populated only when requested
 
     [MaxLength(256)] public string Industry { get; set; } = string.Empty;
     public int? EmployeeCount { get; set; }

@@ -14,26 +14,18 @@ namespace LeadMine.Infrastructure.Scraping.Providers;
 public sealed class ProviderRegistry(
     GooglePlacesProvider google,
     OpenStreetMapProvider openStreetMap,
-    ApifyGoogleMapsProvider apify,
     PlaywrightGoogleMapsProvider browserMaps,
     ILoggerFactory loggerFactory,
     ILogger<ProviderRegistry> logger)
 {
     public const string GoogleId = "google-places";
     public const string OpenStreetMapId = "openstreetmap";
-    public const string ApifyId = "apify";
 
-    /// <summary>Google Maps (Apify) and OpenStreetMap, swept at the same time and merged.</summary>
-    public const string ApifyParallelId = "apify-parallel";
-
-    /// <summary>
-    /// Google Maps via a real browser instead of Apify's actor — Phase 1 of the
-    /// Apify replacement. Additive alongside <see cref="ApifyId"/> rather than
-    /// replacing it yet, so this can be exercised end-to-end (a real search run)
-    /// before Phase 3 cuts the search form and <c>SearchRunner</c> fallback over
-    /// to it and removes the Apify path.
-    /// </summary>
+    /// <summary>Google Maps, scraped with a real browser instead of a paid API.</summary>
     public const string BrowserId = "browser";
+
+    /// <summary>Google Maps (browser) and OpenStreetMap, swept at the same time and merged.</summary>
+    public const string BrowserParallelId = "browser-parallel";
 
     public IPlaceProvider Select(string? requested, ProviderContext context)
     {
@@ -64,17 +56,9 @@ public sealed class ProviderRegistry(
             return google;
         }
 
-        if (string.Equals(requested, ApifyId, StringComparison.OrdinalIgnoreCase))
+        if (string.Equals(requested, BrowserParallelId, StringComparison.OrdinalIgnoreCase))
         {
-            var notReady = apify.Readiness(context);
-            if (notReady is not null) throw new ProviderException(notReady, ProviderFailure.MissingApiKey);
-
-            return apify;
-        }
-
-        if (string.Equals(requested, ApifyParallelId, StringComparison.OrdinalIgnoreCase))
-        {
-            var notReady = apify.Readiness(context);
+            var notReady = browserMaps.Readiness(context);
             if (notReady is not null) throw new ProviderException(notReady, ProviderFailure.MissingApiKey);
 
             // A fresh instance per selection, not a singleton: it carries no
@@ -82,7 +66,7 @@ public sealed class ProviderRegistry(
             // themselves stateless singletons), so this is cheap, and it keeps
             // "constructed once per run" an invariant nothing downstream needs
             // to reason about.
-            return new ParallelMergedProvider(apify, openStreetMap, loggerFactory.CreateLogger<ParallelMergedProvider>());
+            return new ParallelMergedProvider(browserMaps, openStreetMap, loggerFactory.CreateLogger<ParallelMergedProvider>());
         }
 
         // No explicit choice: use Google if it can run, otherwise OSM.

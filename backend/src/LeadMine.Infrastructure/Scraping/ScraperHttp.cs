@@ -34,14 +34,6 @@ public static class ScraperHttpClients
     public const string Crawler = "scraper-crawler";
 
     /// <summary>
-    /// Calls to the Apify platform API (start a run, poll status, fetch a
-    /// dataset). Kept separate from <see cref="Provider"/>: each individual
-    /// call is quick, but the actor run itself can take minutes, which the
-    /// provider paces out as a poll loop rather than one long-held request.
-    /// </summary>
-    public const string Apify = "scraper-apify";
-
-    /// <summary>
     /// Narrows the shared provider client's ceiling for one call.
     /// <para>
     /// <see cref="HttpClient.Timeout"/> applies per client, so a fast provider

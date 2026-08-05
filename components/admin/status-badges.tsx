@@ -10,7 +10,7 @@ export const BACKEND_SOURCE_LABEL: Record<BackendSource, string> = {
   Manual: 'Manual',
   GooglePlaces: 'Google Places',
   OpenStreetMap: 'OpenStreetMap',
-  Apify: 'Google Maps (Apify)',
+  GoogleMapsBrowser: 'Google Maps (browser)',
 };
 
 export function BackendSourceBadge({ source }: { source: BackendSource }) {

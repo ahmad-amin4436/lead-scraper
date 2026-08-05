@@ -1,3 +1,4 @@
+using LeadMine.Infrastructure.Scraping.Providers;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 using Microsoft.Playwright;
@@ -122,6 +123,9 @@ public sealed class LinkedInSessionManager(
 
             if (_searchesToday >= limit)
             {
+                logger.LogWarning(
+                    "LinkedIn daily search cap ({Limit}) reached; refusing further LinkedIn calls until UTC midnight", limit);
+
                 throw new ProviderException(
                     $"LinkedIn daily search cap ({limit}) reached for this process. Resets at UTC midnight. " +
                     "Raise Scraper:LinkedInMaxSearchesPerDay if needed, but LinkedIn's own throttling is the real ceiling.",

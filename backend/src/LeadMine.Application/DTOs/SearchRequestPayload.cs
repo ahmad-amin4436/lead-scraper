@@ -52,10 +52,10 @@ public sealed class SearchRequestPayload
     public string? Provider { get; set; }
 
     /// <summary>
-    /// Enrich each discovered lead with Apify's Google Maps detail (opening
-    /// hours, postal code, images, a fresher rating/review count) on top of
-    /// what Google Places' Text Search already returned. Opt-in: unlike
-    /// enrichment, each call is a billed Apify event.
+    /// Enrich each discovered lead with Google Maps detail (opening hours,
+    /// postal code, a fresher rating/review count) on top of what Google
+    /// Places' Text Search already returned, via a real browser session. Opt-in:
+    /// unlike website enrichment, each call is a real page load, not a cheap API call.
     /// </summary>
     [JsonPropertyName("enrichGoogleMaps")]
     public bool EnrichGoogleMaps { get; set; }
@@ -63,7 +63,8 @@ public sealed class SearchRequestPayload
     /// <summary>
     /// Enrich each discovered lead's company with LinkedIn data (industry,
     /// employee count, description), then search LinkedIn for decision-makers
-    /// at that company. Opt-in for the same reason as <see cref="EnrichGoogleMaps"/>.
+    /// at that company, via a real logged-in browser session. Opt-in for the
+    /// same reason as <see cref="EnrichGoogleMaps"/>.
     /// </summary>
     [JsonPropertyName("enrichLinkedIn")]
     public bool EnrichLinkedIn { get; set; }

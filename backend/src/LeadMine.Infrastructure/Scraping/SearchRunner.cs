@@ -35,9 +35,9 @@ public sealed class SearchRunner(
     GeocodingService geocoding,
     EnrichmentService enrichment,
     VerificationService verification,
-    ApifyMapsEnrichmentService mapsEnrichment,
-    ApifyLinkedInCompanyService linkedInCompany,
-    ApifyLinkedInPeopleService linkedInPeople,
+    PlaywrightMapsEnrichmentService mapsEnrichment,
+    PlaywrightLinkedInCompanyService linkedInCompany,
+    PlaywrightLinkedInPeopleService linkedInPeople,
     IOptionsMonitor<ScraperOptions> optionsMonitor,
     ILogger<SearchRunner> logger)
 {
@@ -200,18 +200,19 @@ public sealed class SearchRunner(
                 // provider rather than letting the switch itself cost a task.
                 switchedFallback = true;
 
-                // Google Maps via Apify first — it is the closer substitute
-                // for Google Places' data. OpenStreetMap is the last resort,
-                // used only if Apify itself cannot run (no token configured),
-                // so a quota exhaustion never leaves the sweep with nothing.
+                // Google Maps via a real browser first — it is the closer
+                // substitute for Google Places' data. OpenStreetMap is the
+                // last resort, used only if the browser itself cannot run (see
+                // PlaywrightBrowserManager.Readiness), so a quota exhaustion
+                // never leaves the sweep with nothing.
                 string fallbackId;
                 string fallbackLabel;
 
                 try
                 {
-                    provider = providers.Select(ProviderRegistry.ApifyId, state.ProviderContext);
-                    fallbackId = ProviderRegistry.ApifyId;
-                    fallbackLabel = "Google Maps (Apify)";
+                    provider = providers.Select(ProviderRegistry.BrowserId, state.ProviderContext);
+                    fallbackId = ProviderRegistry.BrowserId;
+                    fallbackLabel = "Google Maps (browser)";
                 }
                 catch (ProviderException)
                 {
@@ -274,7 +275,7 @@ public sealed class SearchRunner(
 
             if ((state.Payload.EnrichGoogleMaps || state.Payload.EnrichLinkedIn) && leads.Count > 0)
             {
-                await EnrichWithApifyAsync(state, leads, task, abort, stoppingToken);
+                await EnrichWithBrowserAsync(state, leads, task, abort, stoppingToken);
             }
 
             foreach (var lead in leads)
@@ -502,18 +503,20 @@ public sealed class SearchRunner(
     }
 
     /// <summary>
-    /// Google Maps detail and LinkedIn company enrichment via Apify, opt-in
-    /// (<see cref="SearchRequestPayload.EnrichGoogleMaps"/>/
-    /// <see cref="SearchRequestPayload.EnrichLinkedIn"/>) since each call is a
-    /// billed Apify event. Runs on every lead regardless of whether it has a
-    /// website — unlike <see cref="EnrichAsync"/>, neither of these needs one.
+    /// Google Maps detail and LinkedIn company enrichment via a real browser,
+    /// opt-in (<see cref="SearchRequestPayload.EnrichGoogleMaps"/>/
+    /// <see cref="SearchRequestPayload.EnrichLinkedIn"/>) since each is a real
+    /// page load, not a cheap API call. Runs on every lead regardless of
+    /// whether it has a website — unlike <see cref="EnrichAsync"/>, neither of
+    /// these needs one.
     /// <para>
     /// Best-effort like the website crawl above: a failure on one lead (a
-    /// rate limit, nothing found, an actor hiccup) is logged and skipped, not
-    /// allowed to fail the task over what the rest of the batch still found.
+    /// selector that no longer matches, nothing found, a session hiccup) is
+    /// logged and skipped, not allowed to fail the task over what the rest of
+    /// the batch still found.
     /// </para>
     /// </summary>
-    private async Task EnrichWithApifyAsync(
+    private async Task EnrichWithBrowserAsync(
         RunState state,
         List<IngestLead> leads,
         SearchTask task,
@@ -559,7 +562,7 @@ public sealed class SearchRunner(
                     }
                     catch (Exception ex)
                     {
-                        logger.LogDebug(ex, "Google Maps (Apify) enrichment failed for {Name}", lead.Name);
+                        logger.LogDebug(ex, "Google Maps (browser) enrichment failed for {Name}", lead.Name);
                     }
                 }
 
@@ -593,12 +596,12 @@ public sealed class SearchRunner(
                     }
                     catch (Exception ex)
                     {
-                        logger.LogDebug(ex, "LinkedIn company enrichment (Apify) failed for {Name}", lead.Name);
+                        logger.LogDebug(ex, "LinkedIn company enrichment (browser) failed for {Name}", lead.Name);
                     }
                 }
 
                 var done = Interlocked.Increment(ref completed);
-                state.CurrentTask = $"Enriching {task.CategoryLabel} in {task.City} with Apify ({done}/{leads.Count})";
+                state.CurrentTask = $"Enriching {task.CategoryLabel} in {task.City} ({done}/{leads.Count})";
 
                 var now = DateTime.UtcNow.Ticks;
                 var previous = Interlocked.Read(ref lastBeatTicks);
@@ -614,7 +617,7 @@ public sealed class SearchRunner(
     /// <summary>
     /// Finds decision-makers at each company this task just saved, via
     /// LinkedIn people search. Runs after the flush rather than alongside
-    /// <see cref="EnrichWithApifyAsync"/> because <c>Person.BusinessId</c> needs
+    /// <see cref="EnrichWithBrowserAsync"/> because <c>Person.BusinessId</c> needs
     /// a real, saved business id.
     /// <para>
     /// Scoped to this job (<c>SearchJobId</c>) and guarded by
@@ -676,7 +679,7 @@ public sealed class SearchRunner(
             {
                 // Best-effort, same as every other enrichment step: one
                 // company's search failing should not lose the rest.
-                logger.LogDebug(ex, "LinkedIn people search (Apify) failed for {Name}", business.Name);
+                logger.LogDebug(ex, "LinkedIn people search (browser) failed for {Name}", business.Name);
             }
 
             business.LastPeopleSearchedAt = DateTimeOffset.UtcNow;

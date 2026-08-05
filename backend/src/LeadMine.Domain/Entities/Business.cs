@@ -101,7 +101,7 @@ public class Business : AuditableEntity
 
     public int WhatsAppTimesContacted { get; set; }
 
-    // --- Google Maps enrichment (Apify) --------------------------------------
+    // --- Google Maps enrichment (browser) -------------------------------------
     // Filled in after discovery, not by it: Google Places already supplies
     // Rating/ReviewCount/MapsUrl at discovery time, and this step refreshes
     // those plus the detail Places' Text Search doesn't return.
@@ -111,7 +111,7 @@ public class Business : AuditableEntity
     /// <summary>Serialized <c>[{"day":"Monday","hours":"9 AM to 5 PM"}, ...]</c>.</summary>
     public string OpeningHoursJson { get; set; } = string.Empty;
 
-    /// <summary>The Maps place id, as Apify's actor returns it (not Google's own Place ID format).</summary>
+    /// <summary>A stable-ish token parsed from the Maps URL (not Google's own Place ID format).</summary>
     public string PlaceId { get; set; } = string.Empty;
 
     /// <summary>Serialized array of image URLs. No blobs stored — links only.</summary>
@@ -121,7 +121,7 @@ public class Business : AuditableEntity
 
     public DateTimeOffset? LastMapsEnrichedAt { get; set; }
 
-    // --- LinkedIn company enrichment (Apify) ---------------------------------
+    // --- LinkedIn company enrichment (browser) --------------------------------
 
     public string Industry { get; set; } = string.Empty;
 

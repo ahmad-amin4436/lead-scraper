@@ -7,6 +7,7 @@ namespace LeadMine.Application.DTOs;
 public sealed class SearchJobDto
 {
     public Guid Id { get; set; }
+    public JobKind Kind { get; set; }
     public SearchJobStatus Status { get; set; }
     public string RequestJson { get; set; } = "{}";
     public int TotalTasks { get; set; }
@@ -41,11 +42,17 @@ public sealed class SearchJobDto
 
 public sealed class CreateSearchJobRequest
 {
-    /// <summary>The full search request, stored verbatim for the worker and rerun.</summary>
+    /// <summary>Defaults to a search sweep — the only kind that existed before <see cref="JobKind.LinkedInEnrichment"/>.</summary>
+    public JobKind Kind { get; set; } = JobKind.Search;
+
+    /// <summary>The full request, stored verbatim for the worker (and rerun, for a search).</summary>
     [Required]
     public string RequestJson { get; set; } = "{}";
 
-    /// <summary>Total (city × category) pairs, so progress means something immediately.</summary>
+    /// <summary>
+    /// Total units of work — (city × category) pairs for a search, lead count
+    /// for a LinkedIn enrichment batch — so progress means something immediately.
+    /// </summary>
     [Range(0, 100000)]
     public int TotalTasks { get; set; }
 }
@@ -67,6 +74,7 @@ public sealed class ClaimJobRequest
 public sealed class ClaimedJobDto
 {
     public Guid Id { get; set; }
+    public JobKind Kind { get; set; }
     public string RequestJson { get; set; } = "{}";
     public Guid? OwnerUserId { get; set; }
     public int Attempts { get; set; }

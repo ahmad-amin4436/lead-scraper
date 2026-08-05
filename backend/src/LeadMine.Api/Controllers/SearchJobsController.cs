@@ -1,6 +1,7 @@
 using LeadMine.Application.Authorization;
 using LeadMine.Application.Common;
 using LeadMine.Application.DTOs;
+using LeadMine.Domain.Enums;
 using LeadMine.Infrastructure.Authorization;
 using LeadMine.Infrastructure.Services;
 using Microsoft.AspNetCore.Authorization;
@@ -40,7 +41,7 @@ public sealed class SearchJobsController(ISearchJobService jobs) : ApiController
     [HasPermission(Permissions.Searches.View)]
     [ProducesResponseType(typeof(IReadOnlyList<SearchJobDto>), StatusCodes.Status200OK)]
     public async Task<ActionResult<IReadOnlyList<SearchJobDto>>> Active(CancellationToken ct)
-        => Ok(await jobs.GetActiveAsync(ct));
+        => Ok(await jobs.GetActiveAsync(JobKind.Search, ct));
 
     [HttpGet]
     [HasPermission(Permissions.Searches.View)]
@@ -49,7 +50,7 @@ public sealed class SearchJobsController(ISearchJobService jobs) : ApiController
         [FromQuery] int page = 1,
         [FromQuery] int pageSize = 25,
         CancellationToken ct = default)
-        => Ok(await jobs.GetHistoryAsync(page, Math.Clamp(pageSize, 1, 100), ct));
+        => Ok(await jobs.GetHistoryAsync(JobKind.Search, page, Math.Clamp(pageSize, 1, 100), ct));
 
     [HttpGet("{id:guid}")]
     [HasPermission(Permissions.Searches.View)]
@@ -86,7 +87,7 @@ public sealed class SearchJobsController(ISearchJobService jobs) : ApiController
     [HasPermission(Permissions.Searches.Delete)]
     [ProducesResponseType(typeof(int), StatusCodes.Status200OK)]
     public async Task<ActionResult<int>> Clear(CancellationToken ct)
-        => FromResult(await jobs.ClearHistoryAsync(ct));
+        => FromResult(await jobs.ClearHistoryAsync(JobKind.Search, ct));
 }
 
 /// <summary>

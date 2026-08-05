@@ -25,7 +25,7 @@ const SOURCE_MAP: Record<BackendSource, BusinessRecord['source']> = {
   Manual: 'manual',
   GooglePlaces: 'google-places',
   OpenStreetMap: 'openstreetmap',
-  Apify: 'apify',
+  GoogleMapsBrowser: 'browser',
 };
 
 const STATUS_MAP: Record<BackendStatus, BusinessRecord['status']> = {

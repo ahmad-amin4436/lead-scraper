@@ -204,7 +204,7 @@ function LeadForm({ initial, submitting, error, onCancel, onSubmit }: LeadFormPr
       {initial && (initial.industry || initial.employeeCount || initial.companyDescription || initial.postalCode) && (
         <div className="space-y-2 rounded-lg border border-border bg-muted/40 p-3">
           <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
-            Enrichment (Apify) — read-only
+            Enrichment — read-only
           </p>
           <div className="flex flex-wrap gap-1.5">
             {initial.industry && <Badge variant="secondary">{initial.industry}</Badge>}

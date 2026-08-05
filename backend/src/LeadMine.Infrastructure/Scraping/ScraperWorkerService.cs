@@ -1,4 +1,5 @@
 using LeadMine.Application.DTOs;
+using LeadMine.Domain.Enums;
 using LeadMine.Infrastructure.Services;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
@@ -89,12 +90,21 @@ public sealed class ScraperWorkerService(
 
                 if (job is not null)
                 {
-                    logger.LogInformation("Worker {WorkerId} running job {JobId}", slotWorkerId, job.Id);
+                    logger.LogInformation(
+                        "Worker {WorkerId} running {Kind} job {JobId}", slotWorkerId, job.Kind, job.Id);
 
                     await using var scope = scopeFactory.CreateAsyncScope();
-                    var runner = scope.ServiceProvider.GetRequiredService<SearchRunner>();
 
-                    await runner.RunAsync(job, slotWorkerId, stoppingToken);
+                    if (job.Kind == JobKind.LinkedInEnrichment)
+                    {
+                        var linkedInRunner = scope.ServiceProvider.GetRequiredService<LinkedInEnrichmentRunner>();
+                        await linkedInRunner.RunAsync(job, slotWorkerId, stoppingToken);
+                    }
+                    else
+                    {
+                        var runner = scope.ServiceProvider.GetRequiredService<SearchRunner>();
+                        await runner.RunAsync(job, slotWorkerId, stoppingToken);
+                    }
                 }
             }
             catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)

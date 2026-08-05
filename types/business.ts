@@ -7,16 +7,17 @@
  */
 
 /**
- * 'apify' and 'apify-parallel' are Google Maps, scraped via an Apify actor —
- * the actual scraping and (for 'apify-parallel') the merge with OpenStreetMap
- * happen entirely in the .NET backend's ProviderRegistry; these ids only need
- * to round-trip through this Next.js layer unchanged.
+ * 'browser' and 'browser-parallel' are Google Maps, scraped with a real
+ * browser instead of a paid API — the actual scraping and (for
+ * 'browser-parallel') the merge with OpenStreetMap happen entirely in the
+ * .NET backend's ProviderRegistry; these ids only need to round-trip through
+ * this Next.js layer unchanged.
  */
 export const BUSINESS_SOURCES = [
   'google-places',
   'openstreetmap',
-  'apify',
-  'apify-parallel',
+  'browser',
+  'browser-parallel',
   'manual',
 ] as const;
 export type BusinessSource = (typeof BUSINESS_SOURCES)[number];

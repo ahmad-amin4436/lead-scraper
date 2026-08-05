@@ -1,50 +1,56 @@
 'use client';
 
-import { useMutation, useQueryClient, type UseMutationResult } from '@tanstack/react-query';
+import { useMutation, useQuery, useQueryClient, type UseMutationResult, type UseQueryResult } from '@tanstack/react-query';
 
 import { apiFetch } from '@/lib/api-client';
+import type { LinkedInJobSnapshot, StartLinkedInEnrichmentRequest } from '@/types/linkedin-job';
 
-// --- shapes mirroring the .NET DTOs ----------------------------------------
+const queryKeys = {
+  activeJobs: ['linkedin-enrichment-jobs'] as const,
+};
 
-export interface LinkedInEnrichmentOutcome {
-  businessId: string;
-  businessName: string;
-  companyEnriched: boolean;
-  peopleFound: number;
-  error: string | null;
-}
-
-export interface EnrichLeadsWithLinkedInResult {
-  requested: number;
-  enriched: number;
-  peopleFound: number;
-  failed: number;
-  outcomes: LinkedInEnrichmentOutcome[];
-}
-
-export interface EnrichLeadsWithLinkedInInput {
-  businessIds: string[];
-  maxDecisionMakersPerCompany?: number;
-}
-
-export function useEnrichLeadsWithLinkedIn(): UseMutationResult<
-  EnrichLeadsWithLinkedInResult,
+/**
+ * Starts a LinkedIn enrichment batch. Returns immediately with the queued
+ * job's snapshot — the batch itself runs in the scraper worker and is tracked
+ * by polling {@link import('./use-linkedin-job-poll').useLinkedInJobPoll}, the
+ * same fire-and-forget-then-poll shape `useStartSearch` uses for search runs.
+ */
+export function useStartLinkedInEnrichment(): UseMutationResult<
+  LinkedInJobSnapshot,
   Error,
-  EnrichLeadsWithLinkedInInput
+  StartLinkedInEnrichmentRequest
 > {
   const client = useQueryClient();
 
   return useMutation({
-    mutationFn: (input) =>
-      apiFetch<EnrichLeadsWithLinkedInResult>('/api/backend/linkedin/enrich', {
+    mutationFn: (request) =>
+      apiFetch<LinkedInJobSnapshot>('/api/linkedin/enrich-jobs', {
         method: 'POST',
-        body: JSON.stringify(input),
+        body: JSON.stringify(request),
       }),
     onSuccess: () => {
-      // Enrichment updates Business rows (industry, employee count, LastLinkedInEnrichedAt)
-      // and inserts new People rows.
-      void client.invalidateQueries({ queryKey: ['leads'] });
-      void client.invalidateQueries({ queryKey: ['people'] });
+      void client.invalidateQueries({ queryKey: queryKeys.activeJobs });
     },
+  });
+}
+
+export function useActiveLinkedInJobs(): UseQueryResult<LinkedInJobSnapshot[]> {
+  return useQuery({
+    queryKey: queryKeys.activeJobs,
+    queryFn: () => apiFetch<LinkedInJobSnapshot[]>('/api/linkedin/enrich-jobs'),
+  });
+}
+
+export function useLinkedInJobCommand(): UseMutationResult<
+  LinkedInJobSnapshot,
+  Error,
+  { jobId: string; command: 'stop' }
+> {
+  return useMutation({
+    mutationFn: ({ jobId, command }) =>
+      apiFetch<LinkedInJobSnapshot>(`/api/linkedin/enrich-jobs/${jobId}`, {
+        method: 'POST',
+        body: JSON.stringify({ command }),
+      }),
   });
 }

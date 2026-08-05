@@ -6,6 +6,16 @@ using Microsoft.Playwright;
 
 namespace LeadMine.Infrastructure.Scraping.Enrichment;
 
+public sealed record MapsEnrichmentResult(
+    string? PostalCode,
+    string? OpeningHoursJson,
+    string? PlaceId,
+    string? ImageUrlsJson,
+    bool? PermanentlyClosed,
+    double? Rating,
+    int? ReviewCount,
+    string? Description);
+
 /// <summary>
 /// Fills in the Google Maps detail the discovery pass does not stop to collect
 /// (opening hours, postal code, a fresher rating/review count) for a business

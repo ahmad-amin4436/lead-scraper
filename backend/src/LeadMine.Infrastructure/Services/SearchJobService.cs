@@ -15,9 +15,13 @@ public interface ISearchJobService
 {
     Task<Result<SearchJobDto>> CreateAsync(CreateSearchJobRequest request, CancellationToken ct = default);
 
-    Task<IReadOnlyList<SearchJobDto>> GetActiveAsync(CancellationToken ct = default);
+    /// <summary>
+    /// Runs of the given kind only — a search page must never adopt a running
+    /// LinkedIn enrichment batch as if it were a search, or vice versa.
+    /// </summary>
+    Task<IReadOnlyList<SearchJobDto>> GetActiveAsync(JobKind kind, CancellationToken ct = default);
 
-    Task<PagedResult<SearchJobDto>> GetHistoryAsync(int page, int pageSize, CancellationToken ct = default);
+    Task<PagedResult<SearchJobDto>> GetHistoryAsync(JobKind kind, int page, int pageSize, CancellationToken ct = default);
 
     Task<Result<SearchJobDto>> GetByIdAsync(Guid id, CancellationToken ct = default);
 
@@ -26,8 +30,8 @@ public interface ISearchJobService
     /// <summary>Removes one finished run from the caller's history.</summary>
     Task<Result> DeleteAsync(Guid id, CancellationToken ct = default);
 
-    /// <summary>Clears the caller's finished runs. Returns how many were removed.</summary>
-    Task<Result<int>> ClearHistoryAsync(CancellationToken ct = default);
+    /// <summary>Clears the caller's finished runs of the given kind. Returns how many were removed.</summary>
+    Task<Result<int>> ClearHistoryAsync(JobKind kind, CancellationToken ct = default);
 
     // --- worker protocol ---
 
@@ -61,10 +65,13 @@ public sealed class SearchJobService(
     {
         if (currentUser.UserId is not { } userId) return Result<SearchJobDto>.Unauthorized();
 
-        // One active run per user: concurrent sweeps by the same person would
-        // multiply provider rate-limit pressure for no benefit.
+        // One active run per user *of the same kind*: a search and a LinkedIn
+        // enrichment batch don't compete for the same provider rate limits, so
+        // they're allowed to run side by side — but two concurrent sweeps (or
+        // two concurrent enrichment batches) by the same person would multiply
+        // pressure for no benefit.
         var existing = await db.SearchJobs
-            .Where(j => j.RequestedByUserId == userId)
+            .Where(j => j.RequestedByUserId == userId && j.Kind == request.Kind)
             .Where(j => j.Status == SearchJobStatus.Queued ||
                         j.Status == SearchJobStatus.Running ||
                         j.Status == SearchJobStatus.Stopping)
@@ -72,12 +79,14 @@ public sealed class SearchJobService(
 
         if (existing is not null)
         {
+            var label = request.Kind == JobKind.LinkedInEnrichment ? "LinkedIn enrichment batch" : "search";
             return Result<SearchJobDto>.Conflict(
-                "You already have a search running. Stop it before starting another.");
+                $"You already have a {label} running. Stop it before starting another.");
         }
 
         var job = new SearchJob
         {
+            Kind = request.Kind,
             Status = SearchJobStatus.Queued,
             RequestJson = request.RequestJson,
             TotalTasks = request.TotalTasks,
@@ -89,13 +98,14 @@ public sealed class SearchJobService(
         db.SearchJobs.Add(job);
         await db.SaveChangesAsync(ct);
 
-        logger.LogInformation("Queued search job {JobId} for {UserId}", job.Id, userId);
+        logger.LogInformation("Queued {Kind} job {JobId} for {UserId}", job.Kind, job.Id, userId);
         return Result<SearchJobDto>.Success(Map(job));
     }
 
-    public async Task<IReadOnlyList<SearchJobDto>> GetActiveAsync(CancellationToken ct = default)
+    public async Task<IReadOnlyList<SearchJobDto>> GetActiveAsync(JobKind kind, CancellationToken ct = default)
     {
         var query = ScopeToCaller(db.SearchJobs.AsNoTracking())
+            .Where(j => j.Kind == kind)
             .Where(j => j.Status == SearchJobStatus.Queued ||
                         j.Status == SearchJobStatus.Running ||
                         j.Status == SearchJobStatus.Stopping);
@@ -105,6 +115,7 @@ public sealed class SearchJobService(
     }
 
     public async Task<PagedResult<SearchJobDto>> GetHistoryAsync(
+        JobKind kind,
         int page,
         int pageSize,
         CancellationToken ct = default)
@@ -114,6 +125,7 @@ public sealed class SearchJobService(
         // `total`/pageCount correct for real pagination: filtering after the
         // page is fetched would make some pages come back short.
         var query = ScopeToCaller(db.SearchJobs.AsNoTracking())
+            .Where(j => j.Kind == kind)
             .Where(j => j.Status == SearchJobStatus.Completed ||
                         j.Status == SearchJobStatus.Failed ||
                         j.Status == SearchJobStatus.Stopped);
@@ -198,9 +210,10 @@ public sealed class SearchJobService(
         return Result.Success();
     }
 
-    public async Task<Result<int>> ClearHistoryAsync(CancellationToken ct = default)
+    public async Task<Result<int>> ClearHistoryAsync(JobKind kind, CancellationToken ct = default)
     {
         var finished = await ScopeToCaller(db.SearchJobs)
+            .Where(j => j.Kind == kind)
             .Where(j => j.Status == SearchJobStatus.Completed ||
                         j.Status == SearchJobStatus.Failed ||
                         j.Status == SearchJobStatus.Stopped)
@@ -304,6 +317,7 @@ public sealed class SearchJobService(
             return new ClaimedJobDto
             {
                 Id = candidate.Id,
+                Kind = candidate.Kind,
                 RequestJson = candidate.RequestJson,
                 OwnerUserId = candidate.RequestedByUserId,
                 Attempts = candidate.Attempts,
@@ -500,6 +514,7 @@ public sealed class SearchJobService(
     private static SearchJobDto Map(SearchJob job) => new()
     {
         Id = job.Id,
+        Kind = job.Kind,
         Status = job.Status,
         RequestJson = job.RequestJson,
         TotalTasks = job.TotalTasks,

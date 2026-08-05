@@ -150,16 +150,6 @@ public interface IPersonService
     Task<Result> DeleteAsync(Guid id, CancellationToken ct = default);
 }
 
-/// <summary>
-/// Enriches a bounded batch of already-saved leads with LinkedIn data — company
-/// detail plus a decision-maker search — outside of a search run.
-/// </summary>
-public interface ILinkedInEnrichmentService
-{
-    Task<Result<EnrichLeadsWithLinkedInResultDto>> EnrichAsync(
-        EnrichLeadsWithLinkedInRequest request, CancellationToken ct = default);
-}
-
 /// <summary>Admin-managed email presets and signatures.</summary>
 public interface IEmailTemplateService
 {

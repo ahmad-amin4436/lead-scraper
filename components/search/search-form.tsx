@@ -475,12 +475,12 @@ export function SearchForm({ defaults, providers, submitting, disabled, onSubmit
 
       <Card>
         <CardHeader>
-          <CardTitle>Enrichment (Apify)</CardTitle>
+          <CardTitle>Enrichment</CardTitle>
           <CardDescription>
-            Optional, deeper enrichment for each lead — a billed Apify event, so leave it off unless
-            you need the extra detail. (LinkedIn enrichment moved to its own page — see LinkedIn
-            Enrichment in the nav — since it runs against leads you already have, not just new ones
-            from this search.)
+            Optional, deeper enrichment for each lead via a real browser session — slower than the
+            base search, so leave it off unless you need the extra detail. (LinkedIn enrichment
+            moved to its own page — see LinkedIn Enrichment in the nav — since it runs against
+            leads you already have, not just new ones from this search.)
           </CardDescription>
         </CardHeader>
         <CardContent className="space-y-4">
@@ -492,8 +492,8 @@ export function SearchForm({ defaults, providers, submitting, disabled, onSubmit
                 <span className="space-y-0.5">
                   <span className="block text-sm font-medium">Enrich with Google Maps detail</span>
                   <span className="block text-xs text-muted-foreground">
-                    Opening hours, postal code, images and a fresher rating/review count — detail
-                    Google Places&apos; text search does not return.
+                    Opening hours, postal code and a fresher rating/review count — detail Google
+                    Places&apos; text search does not return.
                   </span>
                 </span>
                 <Switch
