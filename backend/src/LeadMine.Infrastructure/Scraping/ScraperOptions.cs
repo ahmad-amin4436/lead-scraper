@@ -120,6 +120,62 @@ public sealed class ScraperOptions
     [Range(1, 500)]
     public int SaveBatchSize { get; set; } = 25;
 
+    // --- Playwright browser automation (Google Maps / LinkedIn) -------------
+
+    /// <summary>
+    /// Where Playwright's Chromium download lands. Under the app's own folder
+    /// rather than a system-wide cache, since a shared host may not grant write
+    /// access anywhere else — and it makes the install visible in a normal
+    /// deployment backup instead of living outside it.
+    /// <para>
+    /// Keep this short. Confirmed against a real local launch: Chromium's own
+    /// nested folder names (e.g.
+    /// <c>chromium_headless_shell-1228\chrome-headless-shell-win64\chrome-headless-shell.exe</c>,
+    /// ~70 characters on its own) push the full path over Windows' classic
+    /// 260-character limit surprisingly easily, and <c>CreateProcess</c> fails
+    /// with a bare <c>ENOENT</c> that gives no hint why. If the deployment
+    /// root is already deep, point this at a short absolute path instead (e.g.
+    /// <c>C:\pw\</c>), or enable
+    /// <c>HKLM\SYSTEM\CurrentControlSet\Control\FileSystem\LongPathsEnabled</c>
+    /// on the host.
+    /// </para>
+    /// </summary>
+    public string PlaywrightBrowsersPath { get; set; } = "App_Data/playwright-browsers";
+
+    /// <summary>
+    /// Browser contexts open at once. Each headless Chromium instance is
+    /// roughly 300-500MB; a shared host has little RAM to spare for this
+    /// process on top of what it needs to keep serving requests.
+    /// </summary>
+    [Range(1, 8)]
+    public int PlaywrightConcurrency { get; set; } = 2;
+
+    /// <summary>Lower bound of the random delay between browser actions.</summary>
+    [Range(0, 60_000)]
+    public int PlaywrightMinDelayMs { get; set; } = 800;
+
+    /// <summary>
+    /// Upper bound of the random delay between browser actions. A fixed wait is
+    /// exactly the kind of pattern automated-traffic detection looks for.
+    /// </summary>
+    [Range(0, 120_000)]
+    public int PlaywrightMaxDelayMs { get; set; } = 2500;
+
+    /// <summary>Where a persisted LinkedIn login session (storageState.json) is read from.</summary>
+    public string LinkedInStorageStatePath { get; set; } = "App_Data/linkedin-session.json";
+
+    /// <summary>
+    /// Self-imposed cap on LinkedIn company/people searches per UTC day.
+    /// LinkedIn throttles accounts that search heavily ("commercial use
+    /// limit"); finding that ceiling ourselves is cheaper than finding it by
+    /// getting the dedicated account restricted.
+    /// </summary>
+    [Range(1, 1000)]
+    public int LinkedInMaxSearchesPerDay { get; set; } = 80;
+
+    /// <summary>Where a failed extraction's screenshot + HTML dump are written, for debugging selector drift.</summary>
+    public string ScrapeFailureLogPath { get; set; } = "App_Data/scrape-failures";
+
     public string UserAgent =>
         string.IsNullOrWhiteSpace(CrawlerContactEmail)
             ? "LeadMineAI/1.0 (+https://github.com/leadmine-ai; business contact discovery bot)"

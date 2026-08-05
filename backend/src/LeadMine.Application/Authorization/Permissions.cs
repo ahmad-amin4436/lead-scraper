@@ -170,6 +170,9 @@ public static class Permissions
 
         [PermissionDescription("View the security audit trail")]
         public const string ViewAudit = "system.view-audit";
+
+        [PermissionDescription("Run infrastructure diagnostics (e.g. browser automation feasibility)")]
+        public const string RunDiagnostics = "system.run-diagnostics";
     }
 
     /// <summary>

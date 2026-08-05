@@ -255,6 +255,15 @@ public static class DependencyInjection
         services.AddSingleton<ApifyLinkedInCompanyService>();
         services.AddSingleton<ApifyLinkedInPeopleService>();
 
+        // Owns the one shared Chromium process for every Playwright-backed
+        // provider. Registered as its own interface-free singleton (not
+        // AddHostedService) because it has no background work of its own to
+        // run — only a browser to close, via DI's own singleton disposal on
+        // shutdown, since IAsyncDisposable is honoured automatically.
+        services.AddSingleton<Scraping.Browser.PlaywrightBrowserManager>();
+        services.AddSingleton<PlaywrightGoogleMapsProvider>();
+        services.AddSingleton<PlaywrightMapsEnrichmentService>();
+
         // Scoped: the runner opens its own short-lived scopes for database work,
         // so it must not outlive the scope the worker resolves it from.
         services.AddScoped<SearchRunner>();

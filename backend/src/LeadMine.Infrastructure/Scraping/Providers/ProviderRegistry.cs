@@ -15,6 +15,7 @@ public sealed class ProviderRegistry(
     GooglePlacesProvider google,
     OpenStreetMapProvider openStreetMap,
     ApifyGoogleMapsProvider apify,
+    PlaywrightGoogleMapsProvider browserMaps,
     ILoggerFactory loggerFactory,
     ILogger<ProviderRegistry> logger)
 {
@@ -25,8 +26,25 @@ public sealed class ProviderRegistry(
     /// <summary>Google Maps (Apify) and OpenStreetMap, swept at the same time and merged.</summary>
     public const string ApifyParallelId = "apify-parallel";
 
+    /// <summary>
+    /// Google Maps via a real browser instead of Apify's actor — Phase 1 of the
+    /// Apify replacement. Additive alongside <see cref="ApifyId"/> rather than
+    /// replacing it yet, so this can be exercised end-to-end (a real search run)
+    /// before Phase 3 cuts the search form and <c>SearchRunner</c> fallback over
+    /// to it and removes the Apify path.
+    /// </summary>
+    public const string BrowserId = "browser";
+
     public IPlaceProvider Select(string? requested, ProviderContext context)
     {
+        if (string.Equals(requested, BrowserId, StringComparison.OrdinalIgnoreCase))
+        {
+            var notReady = browserMaps.Readiness(context);
+            if (notReady is not null) throw new ProviderException(notReady, ProviderFailure.MissingApiKey);
+
+            return browserMaps;
+        }
+
         if (string.Equals(requested, OpenStreetMapId, StringComparison.OrdinalIgnoreCase))
         {
             return openStreetMap;
