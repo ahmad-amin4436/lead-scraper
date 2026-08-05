@@ -153,6 +153,17 @@ public sealed class ApifyClient(IHttpClientFactory httpClientFactory, ILogger<Ap
             throw new ProviderException($"Apify actor \"{actorId}\" was not found.", ProviderFailure.InvalidApiKey);
         }
 
+        if (response.StatusCode == HttpStatusCode.PaymentRequired)
+        {
+            // "not-enough-usage-to-run-paid-actor" — this token's account is out
+            // of usage, not the actor itself. Same recovery as a 429: move on to
+            // the next configured token rather than failing the whole call.
+            var body = await response.Content.ReadAsStringAsync(ct);
+            throw new ProviderException(
+                $"Apify token has insufficient usage for actor \"{actorId}\": {Truncate(body)}",
+                ProviderFailure.QuotaExceeded);
+        }
+
         if (!response.IsSuccessStatusCode)
         {
             var body = await response.Content.ReadAsStringAsync(ct);
