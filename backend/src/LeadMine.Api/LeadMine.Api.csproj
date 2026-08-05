@@ -25,4 +25,19 @@
     <ProjectReference Include="..\LeadMine.Infrastructure\LeadMine.Infrastructure.csproj" />
   </ItemGroup>
 
+  <ItemGroup>
+    <!--
+      App_Data is runtime-only state (downloaded Chromium binaries, the
+      LinkedIn session file, scrape-failure diagnostics) — never part of the
+      build. Without this, the SDK's default globbing swept it into Content,
+      and Playwright's browser download nests deep enough
+      (chromium_headless_shell-*\chrome-headless-shell-win64\resources\...)
+      that copying it into a publish output path exceeded Windows' 260-char
+      MAX_PATH and failed the whole publish. See PlaywrightBrowserManager
+      and ScraperOptions.PlaywrightBrowsersPath for why it lives here at all.
+    -->
+    <Content Remove="App_Data\**" />
+    <None Remove="App_Data\**" />
+  </ItemGroup>
+
 </Project>
