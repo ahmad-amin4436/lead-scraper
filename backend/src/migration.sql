@@ -1215,3 +1215,215 @@ GO
 COMMIT;
 GO
 
+BEGIN TRANSACTION;
+GO
+
+IF NOT EXISTS (
+    SELECT * FROM [__EFMigrationsHistory]
+    WHERE [MigrationId] = N'20260804155315_AddLinkedInAndMapsEnrichment'
+)
+BEGIN
+    ALTER TABLE [Businesses] ADD [CompanyDescription] nvarchar(4000) NOT NULL DEFAULT N'';
+END;
+GO
+
+IF NOT EXISTS (
+    SELECT * FROM [__EFMigrationsHistory]
+    WHERE [MigrationId] = N'20260804155315_AddLinkedInAndMapsEnrichment'
+)
+BEGIN
+    ALTER TABLE [Businesses] ADD [EmployeeCount] int NULL;
+END;
+GO
+
+IF NOT EXISTS (
+    SELECT * FROM [__EFMigrationsHistory]
+    WHERE [MigrationId] = N'20260804155315_AddLinkedInAndMapsEnrichment'
+)
+BEGIN
+    ALTER TABLE [Businesses] ADD [ImageUrlsJson] nvarchar(max) NOT NULL DEFAULT N'';
+END;
+GO
+
+IF NOT EXISTS (
+    SELECT * FROM [__EFMigrationsHistory]
+    WHERE [MigrationId] = N'20260804155315_AddLinkedInAndMapsEnrichment'
+)
+BEGIN
+    ALTER TABLE [Businesses] ADD [Industry] nvarchar(256) NOT NULL DEFAULT N'';
+END;
+GO
+
+IF NOT EXISTS (
+    SELECT * FROM [__EFMigrationsHistory]
+    WHERE [MigrationId] = N'20260804155315_AddLinkedInAndMapsEnrichment'
+)
+BEGIN
+    ALTER TABLE [Businesses] ADD [LastLinkedInEnrichedAt] datetimeoffset NULL;
+END;
+GO
+
+IF NOT EXISTS (
+    SELECT * FROM [__EFMigrationsHistory]
+    WHERE [MigrationId] = N'20260804155315_AddLinkedInAndMapsEnrichment'
+)
+BEGIN
+    ALTER TABLE [Businesses] ADD [LastMapsEnrichedAt] datetimeoffset NULL;
+END;
+GO
+
+IF NOT EXISTS (
+    SELECT * FROM [__EFMigrationsHistory]
+    WHERE [MigrationId] = N'20260804155315_AddLinkedInAndMapsEnrichment'
+)
+BEGIN
+    ALTER TABLE [Businesses] ADD [OpeningHoursJson] nvarchar(max) NOT NULL DEFAULT N'';
+END;
+GO
+
+IF NOT EXISTS (
+    SELECT * FROM [__EFMigrationsHistory]
+    WHERE [MigrationId] = N'20260804155315_AddLinkedInAndMapsEnrichment'
+)
+BEGIN
+    ALTER TABLE [Businesses] ADD [PermanentlyClosed] bit NULL;
+END;
+GO
+
+IF NOT EXISTS (
+    SELECT * FROM [__EFMigrationsHistory]
+    WHERE [MigrationId] = N'20260804155315_AddLinkedInAndMapsEnrichment'
+)
+BEGIN
+    ALTER TABLE [Businesses] ADD [PlaceId] nvarchar(256) NOT NULL DEFAULT N'';
+END;
+GO
+
+IF NOT EXISTS (
+    SELECT * FROM [__EFMigrationsHistory]
+    WHERE [MigrationId] = N'20260804155315_AddLinkedInAndMapsEnrichment'
+)
+BEGIN
+    ALTER TABLE [Businesses] ADD [PostalCode] nvarchar(32) NOT NULL DEFAULT N'';
+END;
+GO
+
+IF NOT EXISTS (
+    SELECT * FROM [__EFMigrationsHistory]
+    WHERE [MigrationId] = N'20260804155315_AddLinkedInAndMapsEnrichment'
+)
+BEGIN
+    CREATE TABLE [People] (
+        [Id] uniqueidentifier NOT NULL,
+        [BusinessId] uniqueidentifier NULL,
+        [CompanyName] nvarchar(256) NOT NULL,
+        [FullName] nvarchar(256) NOT NULL,
+        [JobTitle] nvarchar(256) NOT NULL,
+        [Headline] nvarchar(512) NOT NULL,
+        [LinkedInUrl] nvarchar(512) NOT NULL,
+        [Location] nvarchar(256) NOT NULL,
+        [ExperienceJson] nvarchar(max) NOT NULL,
+        [EducationJson] nvarchar(max) NOT NULL,
+        [SkillsJson] nvarchar(max) NOT NULL,
+        [Email] nvarchar(256) NOT NULL,
+        [Phone] nvarchar(64) NOT NULL,
+        [IsDecisionMaker] bit NOT NULL,
+        [DecisionMakerRole] nvarchar(256) NOT NULL,
+        [OwnerUserId] uniqueidentifier NULL,
+        [SearchJobId] uniqueidentifier NULL,
+        [CreatedAt] datetimeoffset NOT NULL,
+        [CreatedBy] uniqueidentifier NULL,
+        [UpdatedAt] datetimeoffset NULL,
+        [UpdatedBy] uniqueidentifier NULL,
+        [IsDeleted] bit NOT NULL,
+        [DeletedAt] datetimeoffset NULL,
+        [DeletedBy] uniqueidentifier NULL,
+        CONSTRAINT [PK_People] PRIMARY KEY ([Id]),
+        CONSTRAINT [FK_People_Businesses_BusinessId] FOREIGN KEY ([BusinessId]) REFERENCES [Businesses] ([Id]) ON DELETE SET NULL
+    );
+END;
+GO
+
+IF NOT EXISTS (
+    SELECT * FROM [__EFMigrationsHistory]
+    WHERE [MigrationId] = N'20260804155315_AddLinkedInAndMapsEnrichment'
+)
+BEGIN
+    CREATE INDEX [IX_People_BusinessId] ON [People] ([BusinessId]);
+END;
+GO
+
+IF NOT EXISTS (
+    SELECT * FROM [__EFMigrationsHistory]
+    WHERE [MigrationId] = N'20260804155315_AddLinkedInAndMapsEnrichment'
+)
+BEGIN
+    CREATE INDEX [IX_People_IsDecisionMaker] ON [People] ([IsDecisionMaker]);
+END;
+GO
+
+IF NOT EXISTS (
+    SELECT * FROM [__EFMigrationsHistory]
+    WHERE [MigrationId] = N'20260804155315_AddLinkedInAndMapsEnrichment'
+)
+BEGIN
+    CREATE INDEX [IX_People_LinkedInUrl] ON [People] ([LinkedInUrl]);
+END;
+GO
+
+IF NOT EXISTS (
+    SELECT * FROM [__EFMigrationsHistory]
+    WHERE [MigrationId] = N'20260804155315_AddLinkedInAndMapsEnrichment'
+)
+BEGIN
+    CREATE INDEX [IX_People_OwnerUserId] ON [People] ([OwnerUserId]);
+END;
+GO
+
+IF NOT EXISTS (
+    SELECT * FROM [__EFMigrationsHistory]
+    WHERE [MigrationId] = N'20260804155315_AddLinkedInAndMapsEnrichment'
+)
+BEGIN
+    CREATE INDEX [IX_People_OwnerUserId_CreatedAt] ON [People] ([OwnerUserId], [CreatedAt]);
+END;
+GO
+
+IF NOT EXISTS (
+    SELECT * FROM [__EFMigrationsHistory]
+    WHERE [MigrationId] = N'20260804155315_AddLinkedInAndMapsEnrichment'
+)
+BEGIN
+    INSERT INTO [__EFMigrationsHistory] ([MigrationId], [ProductVersion])
+    VALUES (N'20260804155315_AddLinkedInAndMapsEnrichment', N'8.0.11');
+END;
+GO
+
+COMMIT;
+GO
+
+BEGIN TRANSACTION;
+GO
+
+IF NOT EXISTS (
+    SELECT * FROM [__EFMigrationsHistory]
+    WHERE [MigrationId] = N'20260804165353_AddPeopleSearchGuard'
+)
+BEGIN
+    ALTER TABLE [Businesses] ADD [LastPeopleSearchedAt] datetimeoffset NULL;
+END;
+GO
+
+IF NOT EXISTS (
+    SELECT * FROM [__EFMigrationsHistory]
+    WHERE [MigrationId] = N'20260804165353_AddPeopleSearchGuard'
+)
+BEGIN
+    INSERT INTO [__EFMigrationsHistory] ([MigrationId], [ProductVersion])
+    VALUES (N'20260804165353_AddPeopleSearchGuard', N'8.0.11');
+END;
+GO
+
+COMMIT;
+GO
+
