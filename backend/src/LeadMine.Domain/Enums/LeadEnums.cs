@@ -91,6 +91,18 @@ public enum JobKind
     /// timeout — see the LinkedIn Enrichment page's history for why.
     /// </summary>
     LinkedInEnrichment = 1,
+
+    /// <summary>
+    /// Standalone LinkedIn people search scoped to one named company — title/
+    /// keyword/location filters, results saved as <see cref="Entities.Person"/>
+    /// rows as they're found, run by <c>LinkedInPeopleSearchRunner</c>. Scoped
+    /// to a single company rather than searching across all of LinkedIn
+    /// because a general cross-company search returns blurred "LinkedIn
+    /// Member" results with no profile link for accounts without much of a
+    /// network — confirmed live, not a theoretical restriction. A company's
+    /// own People tab does not have that restriction.
+    /// </summary>
+    LinkedInPeopleSearch = 2,
 }
 
 public enum ActivityLogLevel

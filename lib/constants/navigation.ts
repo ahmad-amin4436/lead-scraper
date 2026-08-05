@@ -1,4 +1,5 @@
 import {
+  Building2,
   Contact2,
   Database,
   Download,
@@ -67,6 +68,13 @@ export const NAV_ITEMS: NavItem[] = [
     label: 'LinkedIn Enrichment',
     icon: Contact2,
     description: 'Add company detail and find decision-makers for leads you have',
+    permission: 'people.manage',
+  },
+  {
+    href: '/people-search',
+    label: 'LinkedIn People Search',
+    icon: Building2,
+    description: 'Search one company’s LinkedIn People tab and save every match',
     permission: 'people.manage',
   },
   {

@@ -74,4 +74,55 @@ public sealed class LinkedInController(ISearchJobService jobs, ICurrentUser curr
     [ProducesResponseType(typeof(SearchJobDto), StatusCodes.Status200OK)]
     public async Task<ActionResult<SearchJobDto>> StopEnrichJob(Guid id, CancellationToken ct)
         => FromResult(await jobs.RequestStopAsync(id, ct));
+
+    // --- standalone People Search (scoped to one named company) ------------
+
+    /// <summary>
+    /// Queues a company-scoped LinkedIn people search. Scoped to one company
+    /// rather than searching all of LinkedIn: a general cross-company search
+    /// returns blurred "LinkedIn Member" results with no profile link for an
+    /// account without much of a network (confirmed live), but a company's own
+    /// People tab does not have that restriction.
+    /// </summary>
+    [HttpPost("people-search-jobs")]
+    [HasPermission(Permissions.People.Manage)]
+    [ProducesResponseType(typeof(SearchJobDto), StatusCodes.Status202Accepted)]
+    [ProducesResponseType(StatusCodes.Status400BadRequest)]
+    [ProducesResponseType(StatusCodes.Status409Conflict)]
+    public async Task<ActionResult<SearchJobDto>> CreatePeopleSearchJob(
+        LinkedInPeopleSearchRequest request,
+        CancellationToken ct)
+    {
+        if (currentUser.UserId is null) return Unauthorized();
+
+        var result = await jobs.CreateAsync(new CreateSearchJobRequest
+        {
+            Kind = JobKind.LinkedInPeopleSearch,
+            RequestJson = JsonSerializer.Serialize(request),
+            TotalTasks = request.MaxResults,
+        }, ct);
+
+        if (!result.Succeeded) return Problem(result);
+
+        return Accepted(result.Value);
+    }
+
+    [HttpGet("people-search-jobs/{id:guid}")]
+    [HasPermission(Permissions.People.Manage)]
+    [ProducesResponseType(typeof(SearchJobDto), StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status404NotFound)]
+    public async Task<ActionResult<SearchJobDto>> GetPeopleSearchJob(Guid id, CancellationToken ct)
+        => FromResult(await jobs.GetByIdAsync(id, ct));
+
+    [HttpGet("people-search-jobs/active")]
+    [HasPermission(Permissions.People.Manage)]
+    [ProducesResponseType(typeof(IReadOnlyList<SearchJobDto>), StatusCodes.Status200OK)]
+    public async Task<ActionResult<IReadOnlyList<SearchJobDto>>> GetActivePeopleSearchJobs(CancellationToken ct)
+        => Ok(await jobs.GetActiveAsync(JobKind.LinkedInPeopleSearch, ct));
+
+    [HttpPost("people-search-jobs/{id:guid}/stop")]
+    [HasPermission(Permissions.People.Manage)]
+    [ProducesResponseType(typeof(SearchJobDto), StatusCodes.Status200OK)]
+    public async Task<ActionResult<SearchJobDto>> StopPeopleSearchJob(Guid id, CancellationToken ct)
+        => FromResult(await jobs.RequestStopAsync(id, ct));
 }

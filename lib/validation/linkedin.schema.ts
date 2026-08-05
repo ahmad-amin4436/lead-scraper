@@ -9,3 +9,12 @@ export const startLinkedInEnrichmentSchema = z.object({
 });
 
 export type StartLinkedInEnrichmentInput = z.infer<typeof startLinkedInEnrichmentSchema>;
+
+export const startPeopleSearchSchema = z.object({
+  companyName: z.string().trim().min(1, { error: 'Enter a company name' }).max(256),
+  keywords: z.string().trim().max(256).optional(),
+  location: z.string().trim().max(128).optional(),
+  maxResults: z.number().int().min(1).max(100).optional(),
+});
+
+export type StartPeopleSearchInput = z.infer<typeof startPeopleSearchSchema>;

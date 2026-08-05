@@ -12,6 +12,10 @@ const eslintConfig = defineConfig([
     "out/**",
     "build/**",
     "next-env.d.ts",
+    // The .NET backend isn't JS/TS — and its build output now bundles
+    // Playwright's own minified vendor JS (trace viewer assets), which
+    // crashes ESLint's formatter on files well past its expected line length.
+    "backend/**",
   ]),
 ]);
 

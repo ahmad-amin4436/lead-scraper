@@ -8,21 +8,21 @@ namespace LeadMine.Infrastructure.Scraping.Enrichment;
 
 /// <summary>
 /// Finds individuals at a company by scrolling its LinkedIn "People" tab with a
-/// real, logged-in session, and flags which of them look like decision-makers
-/// from their headline.
+/// real, logged-in session.
 /// <para>
-/// Unlike Apify's actor, this has no server-side title filter to lean on, so
-/// it loads the People tab once (unfiltered) and classifies every visible card
-/// client-side against <see cref="DecisionMakerTitles"/> — one page load per
-/// company regardless of how many title variants matter, which matters for
-/// <see cref="LinkedInSessionManager"/>'s daily search budget. The trade-off is
-/// scrolling further into a large company's employee list to find the same
-/// people a server-side filter would have surfaced immediately.
+/// Two callers, two filters, one scroll/collect mechanism
+/// (<see cref="ScrollAndCollectAsync"/>): <see cref="SearchAsync"/> (automatic
+/// enrichment) keeps only cards that look like decision-makers;
+/// <see cref="SearchByKeywordAsync"/> (the standalone People Search page) keeps
+/// every match for a caller-chosen keyword/location filter and must not
+/// additionally apply the decision-maker filter on top of that.
 /// </para>
 /// <para>
-/// <b>Unverified against a live session</b> — see the equivalent note on
-/// <see cref="PlaywrightLinkedInCompanyService"/>. <see cref="ReadProfileCardsAsync"/>
-/// is the piece most likely to need adjustment after the first real run.
+/// Confirmed live: LinkedIn blurs out-of-network results (name replaced with
+/// "LinkedIn Member", no profile link) on its general cross-company people
+/// search for an account with little network — but a company's own People tab
+/// does not have that restriction, which is why both search paths here are
+/// scoped to one company rather than searching all of LinkedIn at once.
 /// </para>
 /// </summary>
 public sealed partial class PlaywrightLinkedInPeopleService(
@@ -49,18 +49,92 @@ public sealed partial class PlaywrightLinkedInPeopleService(
 
     public string? Readiness() => session.Readiness();
 
-    public async Task<IReadOnlyList<LinkedInPersonResult>> SearchAsync(
+    /// <summary>
+    /// Used by automatic enrichment (<c>LinkedInEnrichmentRunner</c>): loads the
+    /// company's People tab unfiltered and keeps only cards whose headline
+    /// matches <see cref="DecisionMakerTitles"/>.
+    /// </summary>
+    public Task<IReadOnlyList<LinkedInPersonResult>> SearchAsync(
         string companyLinkedInUrl,
         int maxResults,
         ProviderContext context,
         CancellationToken ct)
     {
+        var slugMatch = CompanySlugRegex().Match(companyLinkedInUrl);
+        if (!slugMatch.Success) return Task.FromResult<IReadOnlyList<LinkedInPersonResult>>([]);
+
+        var peopleUrl = $"https://www.linkedin.com/company/{slugMatch.Groups[1].Value}/people/";
+
+        return ScrollAndCollectAsync(
+            peopleUrl,
+            maxResults,
+            context,
+            card =>
+            {
+                var (isMatch, role) = ClassifyDecisionMaker(card.Headline);
+                return isMatch ? (Keep: true, IsDecisionMaker: true, Role: role) : (false, false, string.Empty);
+            },
+            "linkedin-people",
+            ct);
+    }
+
+    /// <summary>
+    /// Used by the standalone People Search page: loads the company's People
+    /// tab filtered by <paramref name="keywords"/> (LinkedIn's own "Search
+    /// employees by title, keyword or school" box on that page — passed as a
+    /// URL query param rather than typed into the box, but the same server-side
+    /// filter), keeping every match rather than only decision-maker-shaped
+    /// ones, since the caller already chose the filter.
+    /// </summary>
+    public Task<IReadOnlyList<LinkedInPersonResult>> SearchByKeywordAsync(
+        string companySlug,
+        string? keywords,
+        string? locationFilter,
+        int maxResults,
+        ProviderContext context,
+        CancellationToken ct)
+    {
+        var peopleUrl = string.IsNullOrWhiteSpace(keywords)
+            ? $"https://www.linkedin.com/company/{companySlug}/people/"
+            : $"https://www.linkedin.com/company/{companySlug}/people/?keywords={Uri.EscapeDataString(keywords)}";
+
+        return ScrollAndCollectAsync(
+            peopleUrl,
+            maxResults,
+            context,
+            card =>
+            {
+                // Best-effort: location isn't cleanly separated from the rest
+                // of a card's text (see ReadProfileCardsAsync), so this checks
+                // whatever text the card has, not a dedicated location field.
+                if (!string.IsNullOrWhiteSpace(locationFilter) &&
+                    !card.Headline.Contains(locationFilter, StringComparison.OrdinalIgnoreCase))
+                {
+                    return (false, false, string.Empty);
+                }
+
+                var (isMatch, role) = ClassifyDecisionMaker(card.Headline);
+                return (true, isMatch, role);
+            },
+            "linkedin-people-search",
+            ct);
+    }
+
+    /// <summary>
+    /// Navigates to a company's People tab and scrolls, collecting cards that
+    /// pass <paramref name="keep"/> until <paramref name="maxResults"/> is hit
+    /// or a few consecutive scrolls add nothing new.
+    /// </summary>
+    private async Task<IReadOnlyList<LinkedInPersonResult>> ScrollAndCollectAsync(
+        string peopleUrl,
+        int maxResults,
+        ProviderContext context,
+        Func<ProfileCard, (bool Keep, bool IsDecisionMaker, string Role)> keep,
+        string failureContext,
+        CancellationToken ct)
+    {
         var notReady = Readiness();
         if (notReady is not null) throw new ProviderException(notReady, ProviderFailure.MissingApiKey);
-        if (string.IsNullOrWhiteSpace(companyLinkedInUrl)) return [];
-
-        var peopleUrl = BuildPeopleUrl(companyLinkedInUrl);
-        if (peopleUrl is null) return [];
 
         session.EnsureSearchBudget();
 
@@ -99,14 +173,14 @@ public sealed partial class PlaywrightLinkedInPeopleService(
                     if (results.Count >= maxResults) break;
                     if (!seenProfiles.Add(card.ProfileUrl)) continue;
 
-                    var (isMatch, role) = ClassifyDecisionMaker(card.Headline);
-                    if (!isMatch) continue;
+                    var (matched, isDecisionMaker, role) = keep(card);
+                    if (!matched) continue;
 
                     results.Add(new LinkedInPersonResult(
                         FullName: card.Name,
                         // The People tab shows a headline, not a cleanly
                         // separated current-title field the way a profile
-                        // page or Apify's structured actor output does.
+                        // page or a structured API would.
                         JobTitle: card.Headline,
                         Headline: card.Headline,
                         LinkedInUrl: card.ProfileUrl,
@@ -114,7 +188,7 @@ public sealed partial class PlaywrightLinkedInPeopleService(
                         ExperienceJson: null,
                         EducationJson: null,
                         SkillsJson: null,
-                        IsDecisionMaker: true,
+                        IsDecisionMaker: isDecisionMaker,
                         DecisionMakerRole: role));
                 }
 
@@ -130,7 +204,7 @@ public sealed partial class PlaywrightLinkedInPeopleService(
         }
         catch (Exception ex) when (ex is not OperationCanceledException and not ProviderException)
         {
-            await ScrapeFailureLogger.CaptureAsync(page, "linkedin-people", ex, context.Options, logger, ct);
+            await ScrapeFailureLogger.CaptureAsync(page, failureContext, ex, context.Options, logger, ct);
             throw;
         }
         finally
@@ -190,12 +264,6 @@ public sealed partial class PlaywrightLinkedInPeopleService(
         }
 
         return cards;
-    }
-
-    private static string? BuildPeopleUrl(string companyLinkedInUrl)
-    {
-        var match = CompanySlugRegex().Match(companyLinkedInUrl);
-        return match.Success ? $"https://www.linkedin.com/company/{match.Groups[1].Value}/people/" : null;
     }
 
     private sealed record ProfileCard(string Name, string Headline, string? Location, string ProfileUrl);

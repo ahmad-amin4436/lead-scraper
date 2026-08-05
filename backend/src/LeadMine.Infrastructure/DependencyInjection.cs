@@ -250,6 +250,7 @@ public static class DependencyInjection
         // so it must not outlive the scope the worker resolves it from.
         services.AddScoped<SearchRunner>();
         services.AddScoped<LinkedInEnrichmentRunner>();
+        services.AddScoped<LinkedInPeopleSearchRunner>();
 
         services.AddHostedService<ScraperWorkerService>();
 

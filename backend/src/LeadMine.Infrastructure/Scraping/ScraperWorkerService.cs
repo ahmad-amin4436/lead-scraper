@@ -100,6 +100,11 @@ public sealed class ScraperWorkerService(
                         var linkedInRunner = scope.ServiceProvider.GetRequiredService<LinkedInEnrichmentRunner>();
                         await linkedInRunner.RunAsync(job, slotWorkerId, stoppingToken);
                     }
+                    else if (job.Kind == JobKind.LinkedInPeopleSearch)
+                    {
+                        var peopleSearchRunner = scope.ServiceProvider.GetRequiredService<LinkedInPeopleSearchRunner>();
+                        await peopleSearchRunner.RunAsync(job, slotWorkerId, stoppingToken);
+                    }
                     else
                     {
                         var runner = scope.ServiceProvider.GetRequiredService<SearchRunner>();

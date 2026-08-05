@@ -107,7 +107,21 @@ public sealed partial class PlaywrightLinkedInCompanyService(
             return $"https://www.linkedin.com/company/{existingSlug.Groups[1].Value}/about/";
         }
 
-        var searchUrl = $"https://www.linkedin.com/search/results/companies/?keywords={Uri.EscapeDataString(name)}";
+        var slug = await ResolveCompanySlugByNameAsync(page, name, context, ct);
+        return slug is null ? null : $"https://www.linkedin.com/company/{slug}/about/";
+    }
+
+    /// <summary>
+    /// Searches LinkedIn's own company search by name and returns the first
+    /// match's slug — shared with <see cref="PlaywrightLinkedInPeopleService"/>
+    /// (via <see cref="LinkedInPeopleSearchRunner"/>) rather than duplicated,
+    /// since both need exactly this "I only have a name, find the company"
+    /// step.
+    /// </summary>
+    public static async Task<string?> ResolveCompanySlugByNameAsync(
+        IPage page, string companyName, ProviderContext context, CancellationToken ct)
+    {
+        var searchUrl = $"https://www.linkedin.com/search/results/companies/?keywords={Uri.EscapeDataString(companyName)}";
 
         await context.RateLimiter.WaitAsync(ct);
         await page.GotoAsync(searchUrl, new PageGotoOptions
@@ -116,7 +130,12 @@ public sealed partial class PlaywrightLinkedInCompanyService(
             Timeout = context.Options.RequestTimeoutMs,
         });
 
-        if (LinkedInSessionManager.IsLoggedOutUrl(page.Url)) return page.Url;
+        if (LinkedInSessionManager.IsLoggedOutUrl(page.Url))
+        {
+            throw new ProviderException(
+                "LinkedIn session expired — re-run backend/tools/LinkedInLogin and re-upload storageState.json.",
+                ProviderFailure.MissingApiKey);
+        }
 
         var links = await page.EvalOnSelectorAllAsync<string[]>(
             "a[href*='/company/']", "els => els.map(e => e.href)");
@@ -124,7 +143,7 @@ public sealed partial class PlaywrightLinkedInCompanyService(
         foreach (var link in links)
         {
             var match = CompanySlugRegex().Match(link);
-            if (match.Success) return $"https://www.linkedin.com/company/{match.Groups[1].Value}/about/";
+            if (match.Success) return match.Groups[1].Value;
         }
 
         return null;
