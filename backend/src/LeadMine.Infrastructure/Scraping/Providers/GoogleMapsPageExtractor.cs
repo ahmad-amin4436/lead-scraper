@@ -40,6 +40,23 @@ public static partial class GoogleMapsPageExtractor
     }
 
     /// <summary>
+    /// True when Maps served a verification interstitial — its "unusual
+    /// traffic" notice or a redirect to <c>google.com/sorry/</c> — instead of
+    /// real content. Checked so callers can stop and let the run's error
+    /// surface that this happened, rather than trying to solve or click
+    /// through a challenge that is not this app's to bypass.
+    /// </summary>
+    public static async Task<bool> IsBlockedAsync(IPage page)
+    {
+        if (page.Url.Contains("google.com/sorry/", StringComparison.OrdinalIgnoreCase)) return true;
+
+        var bodyText = await page.InnerTextAsync("body");
+        return bodyText.Contains("unusual traffic", StringComparison.OrdinalIgnoreCase) ||
+               bodyText.Contains("verify you're a human", StringComparison.OrdinalIgnoreCase) ||
+               bodyText.Contains("recaptcha", StringComparison.OrdinalIgnoreCase);
+    }
+
+    /// <summary>
     /// Reads <c>[data-item-id="&lt;itemId&gt;"]</c>'s aria-label and strips a
     /// leading "Label: " prefix Maps adds — e.g. "Address: 123 Main St" → "123 Main St".
     /// </summary>

@@ -1,4 +1,5 @@
 using System.Net;
+using System.Security.Cryptography;
 using System.Text;
 using LeadMine.Application.Interfaces;
 using LeadMine.Domain.Identity;
@@ -63,12 +64,43 @@ public static class DependencyInjection
 
         services.AddOptions<JwtOptions>()
             .Bind(configuration.GetSection(JwtOptions.SectionName))
-            .ValidateDataAnnotations()
-            // Fail at startup, not on the first login attempt.
-            .ValidateOnStart();
+            .ValidateDataAnnotations();
+            // Deliberately no .ValidateOnStart(): the rest of the API (search
+            // jobs, leads, the scraper worker) has nothing to do with login and
+            // must still come up if Jwt:Key is missing, blank, or mid-rotation.
+            // TokenService reads these same options when it actually signs a
+            // token, so a bad key still surfaces immediately — at the first
+            // login attempt, as a clean error, instead of at boot as a crash.
 
-        var jwt = configuration.GetSection(JwtOptions.SectionName).Get<JwtOptions>()
-            ?? throw new InvalidOperationException("The Jwt configuration section is missing.");
+        // A second, tolerant read purely to wire up the bearer-auth middleware
+        // below, which needs a concrete signing key *now* (at service
+        // registration) rather than lazily. A missing/short key must not throw
+        // here — see above — so it falls back to a key nothing was ever signed
+        // with. Every real request still gets checked against it; there just
+        // won't be a valid token to present until Jwt:Key is actually set, which
+        // is the correct fail-closed behaviour (auth off, not auth-crashes-app).
+        var jwtSection = configuration.GetSection(JwtOptions.SectionName);
+        var trimmedKey = jwtSection[nameof(JwtOptions.Key)]?.Trim();
+        var jwtIssuer = jwtSection[nameof(JwtOptions.Issuer)] is { Length: > 0 } issuer ? issuer : "LeadMine.Api";
+        var jwtAudience = jwtSection[nameof(JwtOptions.Audience)] is { Length: > 0 } audience ? audience : "LeadMine.Client";
+
+        var signingKeyBytes = trimmedKey is { Length: >= 32 }
+            ? Encoding.UTF8.GetBytes(trimmedKey)
+            : RandomNumberGenerator.GetBytes(32);
+
+        if (trimmedKey is not { Length: >= 32 })
+        {
+            // No ILogger yet at this point in startup (the service provider
+            // isn't built), and this project has no Serilog dependency of its
+            // own — Console is the one sink guaranteed to reach every hosting
+            // environment's captured output.
+            var problem = string.IsNullOrEmpty(trimmedKey) ? "not configured" : "shorter than 32 characters";
+
+            Console.Error.WriteLine(
+                $"WARNING: Jwt:Key is {problem} — the API is starting anyway, but login and every " +
+                "authenticated request will fail until a real 32+ character key is set " +
+                "(Jwt__Key env var or user-secrets).");
+        }
 
         services.AddAuthentication(options =>
             {
@@ -81,11 +113,11 @@ public static class DependencyInjection
                 options.TokenValidationParameters = new TokenValidationParameters
                 {
                     ValidateIssuer = true,
-                    ValidIssuer = jwt.Issuer,
+                    ValidIssuer = jwtIssuer,
                     ValidateAudience = true,
-                    ValidAudience = jwt.Audience,
+                    ValidAudience = jwtAudience,
                     ValidateIssuerSigningKey = true,
-                    IssuerSigningKey = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(jwt.Key)),
+                    IssuerSigningKey = new SymmetricSecurityKey(signingKeyBytes),
                     ValidateLifetime = true,
                     // No grace period on expiry; the default 5 minutes would keep
                     // a revoked token alive well past its stated lifetime.

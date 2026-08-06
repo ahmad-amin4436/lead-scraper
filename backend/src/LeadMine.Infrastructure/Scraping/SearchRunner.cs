@@ -105,6 +105,14 @@ public sealed class SearchRunner(
     {
         var ct = abort.Token;
 
+        // Lets a slow provider call (see ProviderContext.Heartbeat) renew the
+        // lease mid-call instead of only around it. Ignores the "must stop"
+        // signal BeatAsync returns rather than acting on it directly — that
+        // signal already reaches the provider's own await points via `abort`
+        // being cancelled, the same path a lost lease or stop request always
+        // unwinds through.
+        state.ProviderContext.Heartbeat = _ => BeatAsync(state, abort, null, stoppingToken);
+
         // Resolve the provider before anything else: a missing API key should
         // fail the run immediately, not after geocoding every city.
         IPlaceProvider provider;
@@ -648,7 +656,7 @@ public sealed class SearchRunner(
             try
             {
                 var people = await linkedInPeople.SearchAsync(
-                    business.LinkedIn, state.Payload.MaxDecisionMakersPerCompany, state.ProviderContext, ct);
+                    business.Name, state.Payload.MaxDecisionMakersPerCompany, state.ProviderContext, ct);
 
                 foreach (var person in people)
                 {

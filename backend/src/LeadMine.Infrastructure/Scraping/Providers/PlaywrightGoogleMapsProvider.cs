@@ -1,3 +1,4 @@
+using System.Globalization;
 using LeadMine.Application.DTOs;
 using LeadMine.Domain.Enums;
 using LeadMine.Infrastructure.Scraping.Browser;
@@ -7,11 +8,18 @@ using Microsoft.Playwright;
 namespace LeadMine.Infrastructure.Scraping.Providers;
 
 /// <summary>
-/// Google Maps, driven directly with a real browser instead of Apify's actor.
+/// Google Maps, driven directly with a real browser instead of Apify's actor
+/// or the Google Places API.
 /// <para>
 /// Field extraction lives in <see cref="GoogleMapsPageExtractor"/>, shared with
 /// <see cref="PlaywrightMapsEnrichmentService"/> since both parse the same
 /// rendered page for a different subset of fields.
+/// </para>
+/// <para>
+/// The requested radius is honoured by tiling: <see cref="GeoGrid"/> turns the
+/// city center and radius into one or more viewport-biased search points, each
+/// searched in turn and merged here, since the Maps website itself has no
+/// radius parameter to hand it.
 /// </para>
 /// </summary>
 public sealed class PlaywrightGoogleMapsProvider(
@@ -35,12 +43,7 @@ public sealed class PlaywrightGoogleMapsProvider(
         var notReady = Readiness(context);
         if (notReady is not null) throw new ProviderException(notReady, ProviderFailure.MissingApiKey);
 
-        var searchText = string.Join(
-            " ",
-            new[] { query.CategoryLabel, query.Location.City, query.Location.State, query.Location.Country }
-                .Where(s => !string.IsNullOrWhiteSpace(s)));
-
-        var searchUrl = $"https://www.google.com/maps/search/{Uri.EscapeDataString(searchText)}/?hl=en";
+        var cells = GeoGrid.BuildCoverage(query.Location.Latitude, query.Location.Longitude, query.RadiusMeters);
 
         await using var lease = await browser.AcquireContextAsync(
             new BrowserNewContextOptions
@@ -50,31 +53,135 @@ public sealed class PlaywrightGoogleMapsProvider(
             },
             ct);
 
-        var searchPage = await lease.Context.NewPageAsync();
+        var results = new List<ProviderBusiness>();
 
-        await context.RateLimiter.WaitAsync(ct);
-        await searchPage.GotoAsync(searchUrl, new PageGotoOptions
+        // Shared across every cell, keyed by place token rather than raw URL:
+        // overlapping tiles routinely rediscover the same business, and this
+        // is what stops it being opened twice.
+        var seenTokens = new HashSet<string>(StringComparer.Ordinal);
+
+        foreach (var cell in cells)
         {
-            WaitUntil = WaitUntilState.DOMContentLoaded,
-            Timeout = context.Options.RequestTimeoutMs,
-        });
+            if (results.Count >= query.MaxResults) break;
+            ct.ThrowIfCancellationRequested();
 
-        await GoogleMapsPageExtractor.AcceptConsentIfPresentAsync(searchPage);
+            // A cell's own feed-scrolling can already take a while before any
+            // business is even opened; renew the lease going in rather than
+            // only after the whole cell (which may itself run long) returns.
+            if (context.Heartbeat is not null) await context.Heartbeat(ct);
 
-        // A search with one dominant match sometimes lands directly on a place
-        // page rather than a results list — treat the page itself as the sole
-        // result rather than waiting forever for a feed that will not appear.
-        if (searchPage.Url.Contains("/maps/place/"))
-        {
-            var single = await ExtractPlaceAsync(lease.Context, searchPage.Url, query, context, ct);
-            await searchPage.CloseAsync();
-            return single is null ? [] : [single];
+            var blocked = await SearchCellAsync(lease.Context, query, cell, seenTokens, results, context, ct);
+
+            // Once Maps has flagged this session, further cells would just
+            // hit the same wall — stop expanding coverage and hand back
+            // whatever was already found rather than hammering a blocked
+            // session for the rest of the sweep.
+            if (blocked) break;
         }
 
-        var links = await CollectPlaceLinksAsync(searchPage, query.MaxResults, context, ct);
-        await searchPage.CloseAsync();
+        return results;
+    }
 
-        var results = new List<ProviderBusiness>(links.Count);
+    /// <summary>
+    /// Searches from one grid cell, appending newly-discovered businesses to
+    /// <paramref name="results"/>. Returns true when Maps served a
+    /// verification challenge for this search, so the caller stops trying
+    /// further cells instead of attempting to bypass it.
+    /// </summary>
+    private async Task<bool> SearchCellAsync(
+        IBrowserContext browserContext,
+        ProviderQuery query,
+        GeoGrid.Cell cell,
+        HashSet<string> seenTokens,
+        List<ProviderBusiness> results,
+        ProviderContext context,
+        CancellationToken ct)
+    {
+        var searchText = string.Join(
+            " ",
+            new[] { query.CategoryLabel, query.Location.City, query.Location.State, query.Location.Country }
+                .Where(s => !string.IsNullOrWhiteSpace(s)));
+
+        var lat = cell.Latitude.ToString("F6", CultureInfo.InvariantCulture);
+        var lng = cell.Longitude.ToString("F6", CultureInfo.InvariantCulture);
+        var searchUrl =
+            $"https://www.google.com/maps/search/{Uri.EscapeDataString(searchText)}/@{lat},{lng},{cell.Zoom}z/?hl=en";
+
+        string? singlePlaceUrl = null;
+        List<string> links;
+
+        var searchPage = await browserContext.NewPageAsync();
+
+        try
+        {
+            await context.RateLimiter.WaitAsync(ct);
+            await searchPage.GotoAsync(searchUrl, new PageGotoOptions
+            {
+                WaitUntil = WaitUntilState.DOMContentLoaded,
+                Timeout = context.Options.RequestTimeoutMs,
+            });
+
+            await GoogleMapsPageExtractor.AcceptConsentIfPresentAsync(searchPage);
+
+            if (await GoogleMapsPageExtractor.IsBlockedAsync(searchPage))
+            {
+                await ScrapeFailureLogger.CaptureAsync(
+                    searchPage,
+                    "google-maps-search-blocked",
+                    new ProviderException("Google Maps presented a verification challenge for this search."),
+                    context.Options,
+                    logger,
+                    ct);
+
+                logger.LogWarning(
+                    "Google Maps (browser) was blocked searching for {Category} near {Lat},{Lng}; " +
+                    "stopping this task's remaining coverage rather than trying to bypass it.",
+                    query.CategoryLabel, lat, lng);
+
+                return true;
+            }
+
+            // A search with one dominant match sometimes lands directly on a
+            // place page rather than a results list — treat the page itself
+            // as the sole result rather than waiting forever for a feed that
+            // will not appear.
+            if (searchPage.Url.Contains("/maps/place/"))
+            {
+                singlePlaceUrl = searchPage.Url;
+                links = [];
+            }
+            else
+            {
+                var remaining = query.MaxResults - results.Count;
+                links = await CollectPlaceLinksAsync(searchPage, remaining, seenTokens, context, ct);
+            }
+        }
+        finally
+        {
+            // Done reading from the results page itself; detail extraction
+            // below opens its own pages, so this one need not sit open (and
+            // consuming memory) for the rest of the cell.
+            await searchPage.CloseAsync();
+        }
+
+        if (singlePlaceUrl is not null)
+        {
+            var token = GoogleMapsPageExtractor.ParsePlaceToken(singlePlaceUrl) ?? singlePlaceUrl;
+
+            if (seenTokens.Add(token) && results.Count < query.MaxResults)
+            {
+                var single = await ExtractPlaceAsync(browserContext, singlePlaceUrl, query, context, ct);
+                if (single is not null) results.Add(single);
+            }
+
+            return false;
+        }
+
+        // This loop is what actually risks outrunning the job's lease: up to
+        // MaxResults page loads, each with a deliberate anti-detection delay on
+        // top. Sequential, so a plain timestamp is enough — no concurrent
+        // callers to race like the engine's own Parallel.ForEach heartbeats do.
+        var lastHeartbeat = DateTimeOffset.UtcNow;
 
         foreach (var link in links)
         {
@@ -83,7 +190,7 @@ public sealed class PlaywrightGoogleMapsProvider(
 
             try
             {
-                var business = await ExtractPlaceAsync(lease.Context, link, query, context, ct);
+                var business = await ExtractPlaceAsync(browserContext, link, query, context, ct);
                 if (business is not null) results.Add(business);
             }
             catch (OperationCanceledException) when (ct.IsCancellationRequested)
@@ -95,22 +202,29 @@ public sealed class PlaywrightGoogleMapsProvider(
                 logger.LogDebug(ex, "Failed to extract Google Maps place {Link}", link);
             }
 
+            if (context.Heartbeat is not null && DateTimeOffset.UtcNow - lastHeartbeat > TimeSpan.FromSeconds(15))
+            {
+                await context.Heartbeat(ct);
+                lastHeartbeat = DateTimeOffset.UtcNow;
+            }
+
             await PlaywrightBrowserManager.RandomDelayAsync(
                 context.Options.PlaywrightMinDelayMs, context.Options.PlaywrightMaxDelayMs, ct);
         }
 
-        return results;
+        return false;
     }
 
     /// <summary>
     /// Scrolls the results feed, collecting place links as they load, until
-    /// <paramref name="maxResults"/> is reached or a few consecutive scrolls add
-    /// nothing new (end of the list). Confirmed live: the feed lazy-loads more
-    /// results on <c>scrollTop</c> manipulation, going from 7 to 34 links over
-    /// six scrolls on a real search.
+    /// <paramref name="maxNew"/> new (not already in <paramref name="seenTokens"/>)
+    /// links are found or a few consecutive scrolls add nothing new (end of the
+    /// list). Confirmed live: the feed lazy-loads more results on
+    /// <c>scrollTop</c> manipulation, going from 7 to 34 links over six scrolls
+    /// on a real search.
     /// </summary>
     private static async Task<List<string>> CollectPlaceLinksAsync(
-        IPage page, int maxResults, ProviderContext context, CancellationToken ct)
+        IPage page, int maxNew, HashSet<string> seenTokens, ProviderContext context, CancellationToken ct)
     {
         var feed = page.Locator("[role='feed']").First;
 
@@ -124,28 +238,36 @@ public sealed class PlaywrightGoogleMapsProvider(
             return [];
         }
 
-        var seen = new HashSet<string>(StringComparer.Ordinal);
+        var newLinks = new List<string>();
         var noChangeStreak = 0;
 
-        while (seen.Count < maxResults && noChangeStreak < MaxNoChangeScrolls)
+        while (newLinks.Count < maxNew && noChangeStreak < MaxNoChangeScrolls)
         {
             ct.ThrowIfCancellationRequested();
 
             var hrefs = await page.EvalOnSelectorAllAsync<string[]>(
                 "a[href*='/maps/place/']", "els => els.map(e => e.href)");
 
-            var before = seen.Count;
-            foreach (var href in hrefs) seen.Add(href);
+            var addedThisPass = 0;
 
-            noChangeStreak = seen.Count == before ? noChangeStreak + 1 : 0;
-            if (seen.Count >= maxResults) break;
+            foreach (var href in hrefs)
+            {
+                var token = GoogleMapsPageExtractor.ParsePlaceToken(href) ?? href;
+                if (!seenTokens.Add(token)) continue;
+
+                newLinks.Add(href);
+                addedThisPass++;
+            }
+
+            noChangeStreak = addedThisPass == 0 ? noChangeStreak + 1 : 0;
+            if (newLinks.Count >= maxNew) break;
 
             await feed.EvaluateAsync("el => el.scrollTop = el.scrollHeight");
             await PlaywrightBrowserManager.RandomDelayAsync(
                 context.Options.PlaywrightMinDelayMs, context.Options.PlaywrightMaxDelayMs, ct);
         }
 
-        return seen.Take(maxResults).ToList();
+        return newLinks.Take(maxNew).ToList();
     }
 
     private async Task<ProviderBusiness?> ExtractPlaceAsync(

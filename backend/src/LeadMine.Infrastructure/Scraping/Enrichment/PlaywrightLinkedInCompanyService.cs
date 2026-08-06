@@ -12,15 +12,16 @@ namespace LeadMine.Infrastructure.Scraping.Enrichment;
 /// by driving a real, logged-in browser session against LinkedIn's company
 /// "About" page.
 /// <para>
-/// <b>Unverified against a live session as written.</b> Unlike the Google Maps
-/// providers (confirmed against the real site), LinkedIn requires a login this
-/// environment has no way to obtain — every unauthenticated request to a
-/// company page redirects straight to <c>/uas/login</c> (confirmed). The
-/// selectors below are a best first attempt based on LinkedIn's known page
-/// structure; treat the first real run (after <c>backend/tools/LinkedInLogin</c>)
-/// as the actual test, and expect to adjust <see cref="ReadFieldByLabelAsync"/>
-/// and <see cref="ReadDescriptionAsync"/> against what that run's
-/// <see cref="ScrapeFailureLogger"/> captures turn up.
+/// <b>Confirmed against a live session.</b> <see cref="ReadFieldByLabelAsync"/>,
+/// <see cref="ReadWebsiteAsync"/> and <see cref="ReadDescriptionAsync"/> all
+/// correctly extract real values when given time to render — verified against
+/// a real company page with a real logged-in session. The one thing that made
+/// this look broken in production is <see cref="EnrichAsync"/> reading the page
+/// immediately after <c>DOMContentLoaded</c>: LinkedIn's About page is a
+/// client-rendered SPA, and its fields (including the very "Industry" label
+/// this class waits for below) are not in the DOM yet at that point — every
+/// field read would silently return null, not because the selector was wrong,
+/// but because it ran before the content existed.
 /// </para>
 /// </summary>
 public sealed partial class PlaywrightLinkedInCompanyService(
@@ -66,6 +67,22 @@ public sealed partial class PlaywrightLinkedInCompanyService(
                 throw new ProviderException(
                     "LinkedIn session expired — re-run backend/tools/LinkedInLogin and re-upload storageState.json.",
                     ProviderFailure.MissingApiKey);
+            }
+
+            // The About page renders its detail fields client-side; reading them
+            // right after DOMContentLoaded finds nothing there yet. "Industry" is
+            // the first field this class reads, so it doubles as the readiness
+            // signal for the rest — a timeout means the page loaded but its
+            // detail section did not render in time, not that the fields below
+            // are individually missing (each already tolerates that on its own).
+            try
+            {
+                await page.GetByText("Industry", new PageGetByTextOptions { Exact = true }).First
+                    .WaitForAsync(new LocatorWaitForOptions { Timeout = context.Options.RequestTimeoutMs });
+            }
+            catch (TimeoutException)
+            {
+                logger.LogDebug("LinkedIn About page detail section did not render in time for {Url}", page.Url);
             }
 
             var industry = await ReadFieldByLabelAsync(page, "Industry");

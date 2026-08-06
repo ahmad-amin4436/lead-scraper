@@ -82,6 +82,16 @@ public sealed class PlaywrightMapsEnrichmentService(
                 return null;
             }
 
+            if (await GoogleMapsPageExtractor.IsBlockedAsync(page))
+            {
+                await ScrapeFailureLogger.CaptureAsync(
+                    page, "google-maps-enrich-blocked",
+                    new ProviderException("Google Maps presented a verification challenge during enrichment."),
+                    context.Options, logger, ct);
+
+                return null;
+            }
+
             var address = await GoogleMapsPageExtractor.ReadDataItemLabelAsync(page, "address", "Address:");
             var (rating, reviewCount) = await GoogleMapsPageExtractor.ReadRatingAsync(page);
             var hours = await GoogleMapsPageExtractor.ReadOpeningHoursAsync(page);

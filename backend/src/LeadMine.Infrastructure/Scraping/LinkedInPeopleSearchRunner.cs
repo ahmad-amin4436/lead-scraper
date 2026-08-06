@@ -71,6 +71,10 @@ public sealed class LinkedInPeopleSearchRunner(
 
             var context = new ProviderContext(options, new RateLimiter(options.RateLimitPerMinute), null);
 
+            // Existence check only — the search itself runs by name (see
+            // PlaywrightLinkedInPeopleService's class remarks), so the resolved
+            // slug isn't otherwise needed, but confirming the company exists on
+            // LinkedIn first gives a precise error instead of a silent 0-found.
             var slug = await ResolveSlugAsync(request.CompanyName, context, ct);
             if (slug is null)
             {
@@ -79,10 +83,10 @@ public sealed class LinkedInPeopleSearchRunner(
                 return;
             }
 
-            await BeatAsync(job.Id, workerId, options, $"Searching {request.CompanyName}'s People tab", null, ct);
+            await BeatAsync(job.Id, workerId, options, $"Searching LinkedIn for people at {request.CompanyName}", null, ct);
 
             var people = await linkedInPeople.SearchByKeywordAsync(
-                slug, request.Keywords, request.Location, request.MaxResults, context, ct);
+                request.CompanyName, request.Keywords, request.Location, request.MaxResults, context, ct);
 
             await SaveResultsAsync(job.Id, workerId, ownerUserId, request.CompanyName, people, options, stoppingToken);
 

@@ -97,6 +97,7 @@ public static class DbSeeder
                 Permissions.WhatsApp.Send, Permissions.WhatsApp.ViewTemplates,
                 Permissions.WhatsApp.ManageTemplates,
                 Permissions.People.View, Permissions.People.Manage, Permissions.People.ViewAll,
+                Permissions.LinkedIn.RunEnrichment, Permissions.LinkedIn.RunPeopleSearch,
             ]),
 
         [RoleNames.Analyst] = (

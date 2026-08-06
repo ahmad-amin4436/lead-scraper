@@ -13,7 +13,24 @@ public sealed record ProviderQuery(
 public sealed record ProviderContext(
     ScraperOptions Options,
     RateLimiter RateLimiter,
-    string? GoogleApiKey);
+    string? GoogleApiKey)
+{
+    /// <summary>
+    /// Lets a slow, single <see cref="IPlaceProvider.SearchAsync"/> call renew
+    /// its job's DB lease partway through instead of only before and after.
+    /// <para>
+    /// <c>SearchRunner</c> heartbeats around a provider call, never during it —
+    /// fine for an HTTP-API provider bounded by a request timeout, but a
+    /// browser-driven search opening many listings (each with a deliberate
+    /// anti-detection delay) can run past the lease on its own. Wired up by
+    /// <c>SearchRunner</c>; null for anything that constructs a
+    /// <see cref="ProviderContext"/> without it (tests, etc.), so a provider
+    /// must treat this as optional and best-effort, same as every other
+    /// engine-owned concern it must not implement itself.
+    /// </para>
+    /// </summary>
+    public Func<CancellationToken, Task>? Heartbeat { get; set; }
+}
 
 /// <summary>A source of business listings.</summary>
 public interface IPlaceProvider

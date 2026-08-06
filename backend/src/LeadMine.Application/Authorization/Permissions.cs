@@ -92,6 +92,23 @@ public static class Permissions
         public const string ViewAll = "people.view-all";
     }
 
+    /// <summary>
+    /// Split out from <see cref="People.Manage"/>: that permission also gates
+    /// editing/deleting Person records, which is a different concern from
+    /// running a LinkedIn scrape and shouldn't be granted or withheld as a pair
+    /// with it. Two features, two permissions — same reasoning as
+    /// <see cref="Searches"/> being its own group rather than folded into <see cref="Leads"/>.
+    /// </summary>
+    [PermissionGroup("LinkedIn")]
+    public static class LinkedIn
+    {
+        [PermissionDescription("Run LinkedIn company enrichment on saved leads")]
+        public const string RunEnrichment = "linkedin.run-enrichment";
+
+        [PermissionDescription("Run a standalone LinkedIn people search for one company")]
+        public const string RunPeopleSearch = "linkedin.run-people-search";
+    }
+
     [PermissionGroup("Searches")]
     public static class Searches
     {

@@ -147,10 +147,14 @@ public sealed class LinkedInEnrichmentRunner(
 
                 var linkedInUrl = string.IsNullOrWhiteSpace(lead.LinkedIn) ? company?.LinkedInUrl : lead.LinkedIn;
 
+                // Gated on having found the company on LinkedIn at all, same as
+                // before — but the search itself now runs by name, not URL: see
+                // PlaywrightLinkedInPeopleService's class remarks for why a
+                // company-scoped URL no longer returns any individual profiles.
                 if (!string.IsNullOrWhiteSpace(linkedInUrl))
                 {
                     people = await linkedInPeople.SearchAsync(
-                        linkedInUrl, state.Request.MaxDecisionMakersPerCompany, context, ct);
+                        lead.Name, state.Request.MaxDecisionMakersPerCompany, context, ct);
                 }
             }
             catch (OperationCanceledException) when (ct.IsCancellationRequested)

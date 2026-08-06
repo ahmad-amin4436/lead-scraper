@@ -1,4 +1,3 @@
-using System.Text.RegularExpressions;
 using LeadMine.Infrastructure.Scraping.Browser;
 using LeadMine.Infrastructure.Scraping.Providers;
 using Microsoft.Extensions.Logging;
@@ -7,8 +6,9 @@ using Microsoft.Playwright;
 namespace LeadMine.Infrastructure.Scraping.Enrichment;
 
 /// <summary>
-/// Finds individuals at a company by scrolling its LinkedIn "People" tab with a
-/// real, logged-in session.
+/// Finds individuals at a company via LinkedIn's general people search, scoped
+/// to that company by folding its name into the search keywords, with a real,
+/// logged-in session.
 /// <para>
 /// Two callers, two filters, one scroll/collect mechanism
 /// (<see cref="ScrollAndCollectAsync"/>): <see cref="SearchAsync"/> (automatic
@@ -18,14 +18,36 @@ namespace LeadMine.Infrastructure.Scraping.Enrichment;
 /// additionally apply the decision-maker filter on top of that.
 /// </para>
 /// <para>
-/// Confirmed live: LinkedIn blurs out-of-network results (name replaced with
-/// "LinkedIn Member", no profile link) on its general cross-company people
-/// search for an account with little network — but a company's own People tab
-/// does not have that restriction, which is why both search paths here are
-/// scoped to one company rather than searching all of LinkedIn at once.
+/// <b>Confirmed live, with two real constraints — not "unverified," but not
+/// unconditionally reliable either:</b>
 /// </para>
+/// <list type="number">
+/// <item>
+/// A company's own <c>/company/{slug}/people/</c> page — this class's original
+/// target — is no longer a browsable roster. LinkedIn replaced it with an
+/// aggregate insights page (member counts, "where they live/studied" charts);
+/// there is no list of individual cards there at all anymore, confirmed against
+/// a real session, regardless of any keyword filter appended to that URL. The
+/// general people-search below is the only URL that still returns individual
+/// profile cards.
+/// </item>
+/// <item>
+/// Confirmed live: LinkedIn blurs out-of-network results on that general search
+/// — name replaced with "LinkedIn Member", no <c>/in/</c> profile link — for an
+/// account whose own network is small. This is a per-account restriction, not a
+/// selector problem: on the dedicated scraping account this app was built
+/// against, even a 1st-degree-only filter with no keyword returned zero
+/// results, meaning that account currently has close to no real connections, so
+/// close to 100% of search results come back anonymised. <see cref="ScrollAndCollectAsync"/>
+/// already only matches cards with a real <c>/in/</c> link — which blurred
+/// cards do not have — plus an explicit name check as a second guard, so this
+/// shows up as a low or zero result count rather than garbage rows, but no
+/// selector or URL change fixes it. It resolves as the account accumulates
+/// real connections.
+/// </item>
+/// </list>
 /// </summary>
-public sealed partial class PlaywrightLinkedInPeopleService(
+public sealed class PlaywrightLinkedInPeopleService(
     LinkedInSessionManager session,
     ILogger<PlaywrightLinkedInPeopleService> logger)
 {
@@ -50,20 +72,17 @@ public sealed partial class PlaywrightLinkedInPeopleService(
     public string? Readiness() => session.Readiness();
 
     /// <summary>
-    /// Used by automatic enrichment (<c>LinkedInEnrichmentRunner</c>): loads the
-    /// company's People tab unfiltered and keeps only cards whose headline
-    /// matches <see cref="DecisionMakerTitles"/>.
+    /// Used by automatic enrichment (<c>LinkedInEnrichmentRunner</c>): searches
+    /// LinkedIn for <paramref name="companyName"/> and keeps only cards whose
+    /// headline matches <see cref="DecisionMakerTitles"/>.
     /// </summary>
     public Task<IReadOnlyList<LinkedInPersonResult>> SearchAsync(
-        string companyLinkedInUrl,
+        string companyName,
         int maxResults,
         ProviderContext context,
         CancellationToken ct)
     {
-        var slugMatch = CompanySlugRegex().Match(companyLinkedInUrl);
-        if (!slugMatch.Success) return Task.FromResult<IReadOnlyList<LinkedInPersonResult>>([]);
-
-        var peopleUrl = $"https://www.linkedin.com/company/{slugMatch.Groups[1].Value}/people/";
+        var peopleUrl = $"https://www.linkedin.com/search/results/people/?keywords={Uri.EscapeDataString(companyName)}";
 
         return ScrollAndCollectAsync(
             peopleUrl,
@@ -79,24 +98,23 @@ public sealed partial class PlaywrightLinkedInPeopleService(
     }
 
     /// <summary>
-    /// Used by the standalone People Search page: loads the company's People
-    /// tab filtered by <paramref name="keywords"/> (LinkedIn's own "Search
-    /// employees by title, keyword or school" box on that page — passed as a
-    /// URL query param rather than typed into the box, but the same server-side
-    /// filter), keeping every match rather than only decision-maker-shaped
+    /// Used by the standalone People Search page: searches LinkedIn for
+    /// <paramref name="companyName"/> plus <paramref name="keywords"/> together
+    /// (LinkedIn's search keywords are a single free-text field — there is no
+    /// separate "restrict to this company" parameter that still works, see the
+    /// class remarks), keeping every match rather than only decision-maker-shaped
     /// ones, since the caller already chose the filter.
     /// </summary>
     public Task<IReadOnlyList<LinkedInPersonResult>> SearchByKeywordAsync(
-        string companySlug,
+        string companyName,
         string? keywords,
         string? locationFilter,
         int maxResults,
         ProviderContext context,
         CancellationToken ct)
     {
-        var peopleUrl = string.IsNullOrWhiteSpace(keywords)
-            ? $"https://www.linkedin.com/company/{companySlug}/people/"
-            : $"https://www.linkedin.com/company/{companySlug}/people/?keywords={Uri.EscapeDataString(keywords)}";
+        var terms = string.Join(" ", new[] { companyName, keywords }.Where(s => !string.IsNullOrWhiteSpace(s)));
+        var peopleUrl = $"https://www.linkedin.com/search/results/people/?keywords={Uri.EscapeDataString(terms)}";
 
         return ScrollAndCollectAsync(
             peopleUrl,
@@ -120,10 +138,13 @@ public sealed partial class PlaywrightLinkedInPeopleService(
             ct);
     }
 
+    /// <summary>Exact text LinkedIn substitutes for a name it will not reveal to this account. Never save it.</summary>
+    private const string BlurredMemberName = "LinkedIn Member";
+
     /// <summary>
-    /// Navigates to a company's People tab and scrolls, collecting cards that
-    /// pass <paramref name="keep"/> until <paramref name="maxResults"/> is hit
-    /// or a few consecutive scrolls add nothing new.
+    /// Navigates to a LinkedIn people-search URL and scrolls, collecting cards
+    /// that pass <paramref name="keep"/> until <paramref name="maxResults"/> is
+    /// hit or a few consecutive scrolls add nothing new.
     /// </summary>
     private async Task<IReadOnlyList<LinkedInPersonResult>> ScrollAndCollectAsync(
         string peopleUrl,
@@ -157,6 +178,22 @@ public sealed partial class PlaywrightLinkedInPeopleService(
                     ProviderFailure.MissingApiKey);
             }
 
+            // Search results render client-side; reading immediately after
+            // DOMContentLoaded finds nothing there yet (confirmed live — 0
+            // results before this wait, real results after it). A timeout here
+            // is still a legitimate outcome (a search that genuinely has no
+            // results renders no cards either), so it falls through to the
+            // scroll loop below rather than failing the call.
+            try
+            {
+                await page.Locator("a[href*='/in/']").First
+                    .WaitForAsync(new LocatorWaitForOptions { Timeout = context.Options.RequestTimeoutMs });
+            }
+            catch (TimeoutException)
+            {
+                logger.LogDebug("No LinkedIn people-search results rendered in time for {Url}", page.Url);
+            }
+
             var results = new List<LinkedInPersonResult>();
             var seenProfiles = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
             var noChangeStreak = 0;
@@ -172,6 +209,13 @@ public sealed partial class PlaywrightLinkedInPeopleService(
                 {
                     if (results.Count >= maxResults) break;
                     if (!seenProfiles.Add(card.ProfileUrl)) continue;
+
+                    // Belt-and-suspenders: a card with a real /in/ link (the
+                    // selector ReadProfileCardsAsync already requires) should
+                    // never carry this placeholder name — LinkedIn's blurred,
+                    // out-of-network cards don't expose that link at all,
+                    // confirmed live. Guards the rare case where it does.
+                    if (card.Name.Equals(BlurredMemberName, StringComparison.Ordinal)) continue;
 
                     var (matched, isDecisionMaker, role) = keep(card);
                     if (!matched) continue;
@@ -267,7 +311,4 @@ public sealed partial class PlaywrightLinkedInPeopleService(
     }
 
     private sealed record ProfileCard(string Name, string Headline, string? Location, string ProfileUrl);
-
-    [GeneratedRegex(@"linkedin\.com/company/([^/?]+)", RegexOptions.IgnoreCase)]
-    private static partial Regex CompanySlugRegex();
 }
