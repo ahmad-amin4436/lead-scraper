@@ -42,8 +42,19 @@ public static class GeoGrid
     /// </summary>
     private const double OverlapFactor = 1.5;
 
-    /// <summary>Safety valve against a pathologically large radius generating an unbounded number of searches.</summary>
-    private const int MaxCells = 120;
+    /// <summary>
+    /// Hard ceiling on searches generated for one task.
+    /// <para>
+    /// Measured against the live site: one Maps search's feed exhausts at
+    /// roughly 20 places, and neighbouring cells overlap by design, so cells
+    /// past the first handful return mostly businesses already seen. 120 cells
+    /// meant a single (city × category) task could issue 120 full searches —
+    /// minutes of work for a rapidly shrinking number of new results. The
+    /// caller stops earlier still once cells stop producing anything new (see
+    /// <c>PlaywrightGoogleMapsProvider</c>); this is only the backstop.
+    /// </para>
+    /// </summary>
+    private const int MaxCells = 24;
 
     /// <summary>One search point: where to center the Maps viewport and how far out it should be zoomed.</summary>
     public readonly record struct Cell(double Latitude, double Longitude, int Zoom);

@@ -29,6 +29,18 @@ public sealed class PlaywrightGoogleMapsProvider(
     /// <summary>Consecutive scrolls that add no new result before giving up on finding more.</summary>
     private const int MaxNoChangeScrolls = 3;
 
+    /// <summary>
+    /// Consecutive grid cells that discover no business the sweep has not
+    /// already seen before the remaining cells are abandoned.
+    /// <para>
+    /// Overlapping cells re-find each other's businesses by design, so once a
+    /// few in a row are pure duplicates the area is covered and the rest are
+    /// paying a full search each for nothing. This is what stops a large radius
+    /// spending minutes past the point of diminishing returns.
+    /// </para>
+    /// </summary>
+    private const int MaxNoNewCells = 3;
+
     public BusinessSource Source => BusinessSource.GoogleMapsBrowser;
 
     public string Label => "Google Maps (browser)";
@@ -60,6 +72,8 @@ public sealed class PlaywrightGoogleMapsProvider(
         // is what stops it being opened twice.
         var seenTokens = new HashSet<string>(StringComparer.Ordinal);
 
+        var noNewCellStreak = 0;
+
         foreach (var cell in cells)
         {
             if (results.Count >= query.MaxResults) break;
@@ -70,6 +84,7 @@ public sealed class PlaywrightGoogleMapsProvider(
             // only after the whole cell (which may itself run long) returns.
             if (context.Heartbeat is not null) await context.Heartbeat(ct);
 
+            var before = results.Count;
             var blocked = await SearchCellAsync(lease.Context, query, cell, seenTokens, results, context, ct);
 
             // Once Maps has flagged this session, further cells would just
@@ -77,6 +92,18 @@ public sealed class PlaywrightGoogleMapsProvider(
             // whatever was already found rather than hammering a blocked
             // session for the rest of the sweep.
             if (blocked) break;
+
+            noNewCellStreak = results.Count == before ? noNewCellStreak + 1 : 0;
+
+            if (noNewCellStreak >= MaxNoNewCells)
+            {
+                logger.LogDebug(
+                    "Google Maps (browser): {Streak} consecutive cells added nothing new for {Category}; " +
+                    "treating the area as covered with {Count} business(es).",
+                    noNewCellStreak, query.CategoryLabel, results.Count);
+
+                break;
+            }
         }
 
         return results;
@@ -177,40 +204,70 @@ public sealed class PlaywrightGoogleMapsProvider(
             return false;
         }
 
-        // This loop is what actually risks outrunning the job's lease: up to
+        // Extracted several at a time rather than one page load at a time: this
+        // loop is what actually risks outrunning the job's lease (up to
         // MaxResults page loads, each with a deliberate anti-detection delay on
-        // top. Sequential, so a plain timestamp is enough — no concurrent
-        // callers to race like the engine's own Parallel.ForEach heartbeats do.
-        var lastHeartbeat = DateTimeOffset.UtcNow;
+        // top of the network round trip), and the delay is dead time a lane
+        // spends idle regardless — overlapping several lanes hides most of it
+        // instead of paying it once per business. All lanes share one browser
+        // *context* (opening more pages on it, not more contexts), so this
+        // doesn't compete with PlaywrightConcurrency, and every navigation still
+        // funnels through the shared RateLimiter, so this does not search
+        // faster than the configured request budget — it just stops leaving
+        // that budget idle while a lane sits in its own delay.
+        var resultsLock = new object();
+        var lastHeartbeatTicks = DateTime.UtcNow.Ticks;
+        var heartbeatInterval = TimeSpan.FromSeconds(15).Ticks;
 
-        foreach (var link in links)
-        {
-            if (results.Count >= query.MaxResults) break;
-            ct.ThrowIfCancellationRequested();
+        await Parallel.ForEachAsync(
+            links,
+            new ParallelOptions
+            {
+                MaxDegreeOfParallelism = Math.Max(1, context.Options.EnrichmentConcurrency),
+                CancellationToken = ct,
+            },
+            async (link, laneCt) =>
+            {
+                bool alreadyEnough;
+                lock (resultsLock) { alreadyEnough = results.Count >= query.MaxResults; }
+                if (alreadyEnough) return;
 
-            try
-            {
-                var business = await ExtractPlaceAsync(browserContext, link, query, context, ct);
-                if (business is not null) results.Add(business);
-            }
-            catch (OperationCanceledException) when (ct.IsCancellationRequested)
-            {
-                throw;
-            }
-            catch (Exception ex)
-            {
-                logger.LogDebug(ex, "Failed to extract Google Maps place {Link}", link);
-            }
+                try
+                {
+                    var business = await ExtractPlaceAsync(browserContext, link, query, context, laneCt);
 
-            if (context.Heartbeat is not null && DateTimeOffset.UtcNow - lastHeartbeat > TimeSpan.FromSeconds(15))
-            {
-                await context.Heartbeat(ct);
-                lastHeartbeat = DateTimeOffset.UtcNow;
-            }
+                    if (business is not null)
+                    {
+                        int running;
+                        lock (resultsLock) { results.Add(business); running = results.Count; }
 
-            await PlaywrightBrowserManager.RandomDelayAsync(
-                context.Options.PlaywrightMinDelayMs, context.Options.PlaywrightMaxDelayMs, ct);
-        }
+                        // Reported per business rather than per task: a browser
+                        // sweep can legitimately spend minutes here, and without
+                        // this the run shows "0 found" throughout and reads as hung.
+                        context.ReportDiscovered?.Invoke(running);
+                    }
+                }
+                catch (OperationCanceledException) when (laneCt.IsCancellationRequested)
+                {
+                    throw;
+                }
+                catch (Exception ex)
+                {
+                    logger.LogDebug(ex, "Failed to extract Google Maps place {Link}", link);
+                }
+
+                var now = DateTime.UtcNow.Ticks;
+                var previous = Interlocked.Read(ref lastHeartbeatTicks);
+
+                if (context.Heartbeat is not null && now - previous > heartbeatInterval &&
+                    Interlocked.CompareExchange(ref lastHeartbeatTicks, now, previous) == previous)
+                {
+                    await context.Heartbeat(laneCt);
+                }
+
+                await PlaywrightBrowserManager.RandomDelayAsync(
+                    context.Options.PlaywrightMinDelayMs, context.Options.PlaywrightMaxDelayMs, laneCt);
+            });
 
         return false;
     }

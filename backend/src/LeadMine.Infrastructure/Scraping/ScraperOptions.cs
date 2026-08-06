@@ -104,12 +104,29 @@ public sealed class ScraperOptions
     public string PlaywrightBrowsersPath { get; set; } = "App_Data/playwright-browsers";
 
     /// <summary>
-    /// Browser contexts open at once. Each headless Chromium instance is
-    /// roughly 300-500MB; a shared host has little RAM to spare for this
-    /// process on top of what it needs to keep serving requests.
+    /// Browser <em>contexts</em> open at once, across every concurrent job.
+    /// <para>
+    /// This is the single most important setting for multi-user throughput,
+    /// and it used to be set as if each context were a whole browser: it is
+    /// not. <c>PlaywrightBrowserManager</c> launches one Chromium process and
+    /// hands out contexts on it — a context is an isolated profile (own
+    /// cookies, storage, cache), costing tens of megabytes, not the 300-500MB
+    /// a separate browser instance costs. Sizing this like browser instances
+    /// throttled the whole application to two simultaneous browser operations
+    /// for no real resource reason.
+    /// </para>
+    /// <para>
+    /// Must comfortably exceed <see cref="Concurrency"/>, because a browser
+    /// search holds its context for the entire duration of that search: with
+    /// fewer contexts than concurrent jobs, the extra jobs are claimed and then
+    /// block here waiting for one to free up, which looks exactly like the
+    /// queue being stuck. Allow headroom for
+    /// <see cref="EnrichmentConcurrency"/> on top, since each parallel
+    /// enrichment lane takes its own context.
+    /// </para>
     /// </summary>
-    [Range(1, 8)]
-    public int PlaywrightConcurrency { get; set; } = 2;
+    [Range(1, 64)]
+    public int PlaywrightConcurrency { get; set; } = 12;
 
     /// <summary>Lower bound of the random delay between browser actions.</summary>
     [Range(0, 60_000)]

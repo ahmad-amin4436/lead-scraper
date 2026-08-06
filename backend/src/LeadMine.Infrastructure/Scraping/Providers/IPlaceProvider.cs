@@ -30,6 +30,20 @@ public sealed record ProviderContext(
     /// </para>
     /// </summary>
     public Func<CancellationToken, Task>? Heartbeat { get; set; }
+
+    /// <summary>
+    /// Running count of businesses discovered so far within the current
+    /// <see cref="IPlaceProvider.SearchAsync"/> call.
+    /// <para>
+    /// Without this the engine only learns how many a task found when the whole
+    /// task returns, so a browser-driven sweep — which can legitimately spend
+    /// minutes on one task — reports "0 found" the entire time and looks hung
+    /// when it is working normally. Optional and best-effort, like
+    /// <see cref="Heartbeat"/>: a provider that does not call it simply keeps
+    /// the old end-of-task behaviour.
+    /// </para>
+    /// </summary>
+    public Action<int>? ReportDiscovered { get; set; }
 }
 
 /// <summary>A source of business listings.</summary>

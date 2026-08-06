@@ -19,16 +19,30 @@ namespace LeadMine.Infrastructure.Scraping.Providers;
 /// </summary>
 public static partial class GoogleMapsPageExtractor
 {
+    /// <summary>
+    /// Dismisses the cookie-consent dialog when one is actually on the page.
+    /// <para>
+    /// Counted before clicking, not clicked-and-caught: <c>ClickAsync</c> waits
+    /// for the element to appear before it gives up, so the previous
+    /// click-with-a-3s-timeout spent the full 3 seconds on *every* search that
+    /// had no dialog — measured, and that is the common case on this locale.
+    /// Across a tiled sweep that was minutes of pure dead time. A count is
+    /// instant and answers the same question.
+    /// </para>
+    /// </summary>
     public static async Task AcceptConsentIfPresentAsync(IPage page)
     {
         try
         {
             var consent = page.GetByRole(AriaRole.Button, new PageGetByRoleOptions { NameString = "Accept all" });
-            await consent.ClickAsync(new LocatorClickOptions { Timeout = 3000 });
+            if (await consent.CountAsync() == 0) return;
+
+            await consent.First.ClickAsync(new LocatorClickOptions { Timeout = 3000 });
         }
         catch
         {
-            // No consent dialog on this locale/session — the common case.
+            // Present but not clickable (already dismissed, detached mid-click):
+            // the page is usable either way, so this is never worth failing over.
         }
     }
 

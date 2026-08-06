@@ -63,10 +63,31 @@ public sealed class PlaywrightLinkedInPeopleService(
     /// </summary>
     private static readonly string[] DecisionMakerTitles =
     [
-        "owner", "founder", "co-founder", "ceo", "chief executive", "president",
-        "managing director", "managing partner", "director", "vice president",
-        " vp ", "vp,", "vp.", "chief", "general manager", "gm,", "principal",
-        "partner", "head of",
+        // Ownership / founding
+        "owner", "co-owner", "founder", "co-founder", "cofounder", "proprietor",
+
+        // C-suite, spelled out and as initialisms. The bare "chief" catches
+        // titles this list does not name individually (Chief Revenue Officer,
+        // Chief People Officer, and whatever gets invented next).
+        "ceo", "cfo", "cto", "coo", "cmo", "cio", "ciso", "cco", "cpo", "cro",
+        "chief", "chief executive", "chief financial", "chief technology",
+        "chief operating", "chief marketing", "chief information",
+
+        // Board / executive
+        "president", "vice president", " vp ", "vp,", "vp.", "svp", "evp",
+        "managing director", "managing partner", "board member", "chairman",
+        "chairperson", "executive director", "director",
+
+        // Senior management and functional heads — the people who actually sign
+        // off on a purchase in an SMB, which is what this app is prospecting.
+        "head of", "general manager", "gm,", "principal", "partner",
+        "business development", "operations manager", "hr director",
+        "recruiting manager", "recruitment manager", "talent acquisition",
+        "procurement", "purchasing manager", "it manager", "sales director",
+        "sales manager", "marketing director", "marketing manager",
+        "engineering director", "engineering manager", "product manager",
+        "project manager", "account director", "regional manager",
+        "branch manager", "practice lead", "team lead",
     ];
 
     public string? Readiness() => session.Readiness();
@@ -244,6 +265,11 @@ public sealed class PlaywrightLinkedInPeopleService(
                     context.Options.PlaywrightMinDelayMs, context.Options.PlaywrightMaxDelayMs, ct);
             }
 
+            // Nothing usable: say *why*, rather than letting the caller report
+            // "nobody matched your filters" — which blames the filters for what
+            // is almost always the search returning no people to filter at all.
+            if (results.Count == 0) await ExplainEmptyResultAsync(page, seenProfiles.Count);
+
             return results;
         }
         catch (Exception ex) when (ex is not OperationCanceledException and not ProviderException)
@@ -254,6 +280,63 @@ public sealed class PlaywrightLinkedInPeopleService(
         finally
         {
             await page.CloseAsync();
+        }
+    }
+
+    /// <summary>
+    /// Turns "found nobody" into a specific, actionable reason.
+    /// <para>
+    /// Confirmed live, and the reason this exists: LinkedIn's people search
+    /// only ever returns people inside the signed-in account's own network
+    /// (1st/2nd/3rd degree). The account whose session this app was running
+    /// with had <b>zero connections</b>, so it has no network — and every
+    /// people search returned literally nothing, for companies whose employees
+    /// are plainly visible to a normal account. No selector, URL, or scroll
+    /// strategy can recover from that, so reporting it as "no matches" sent
+    /// people looking for a bug in the scraper instead of at the account.
+    /// </para>
+    /// <para>
+    /// The two empty cases are genuinely different and are reported
+    /// differently: anonymised results mean the network works but these
+    /// particular people are too distant, whereas a completely empty result
+    /// set points at the account having no network at all.
+    /// </para>
+    /// </summary>
+    private async Task ExplainEmptyResultAsync(IPage page, int profileLinksSeen)
+    {
+        string body;
+
+        try
+        {
+            body = await page.InnerTextAsync("body");
+        }
+        catch
+        {
+            return;
+        }
+
+        var anonymised = body.Contains(BlurredMemberName, StringComparison.Ordinal);
+
+        if (anonymised)
+        {
+            logger.LogWarning(
+                "LinkedIn returned results for {Url}, but they are anonymised (\"{Placeholder}\", no profile link) — " +
+                "they sit outside this account's network, so their names cannot be read. " +
+                "Connecting the LinkedIn account to more people in this industry/region widens what it can see.",
+                page.Url, BlurredMemberName);
+
+            return;
+        }
+
+        if (profileLinksSeen == 0)
+        {
+            throw new ProviderException(
+                "LinkedIn returned no people at all for this search. LinkedIn only surfaces people within the " +
+                "signed-in account's own network, so an account with no connections gets an empty result for " +
+                "every search — even for companies whose staff are visible to a normal account. Check that the " +
+                "account saved in linkedin-session.json has real connections (open linkedin.com/mynetwork/ as " +
+                "that account), then re-run backend/tools/LinkedInLogin and re-upload the session.",
+                ProviderFailure.MissingApiKey);
         }
     }
 

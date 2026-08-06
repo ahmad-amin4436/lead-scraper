@@ -113,6 +113,12 @@ public sealed class SearchRunner(
         // unwinds through.
         state.ProviderContext.Heartbeat = _ => BeatAsync(state, abort, null, stoppingToken);
 
+        // Live discovery count for the current task, surfaced through the
+        // heartbeat's task label. Kept separate from `state.Found` (which is
+        // still committed once per task below) so a task that fails or is
+        // retried cannot leave a partial count baked into the run's totals.
+        state.ProviderContext.ReportDiscovered = found => state.LiveDiscovered = found;
+
         // Resolve the provider before anything else: a missing API key should
         // fail the run immediately, not after geocoding every city.
         IPlaceProvider provider;
@@ -177,6 +183,7 @@ public sealed class SearchRunner(
                 continue;
             }
 
+            state.LiveDiscovered = 0;
             state.CurrentTask = $"Searching {task.CategoryLabel} in {task.City}";
             if (!await BeatAsync(state, abort, null, stoppingToken)) break;
 
@@ -187,6 +194,7 @@ public sealed class SearchRunner(
             {
                 businesses = await SearchTaskAsync(task, location);
                 state.Found += businesses.Count;
+                state.LiveDiscovered = 0;
             }
             catch (OperationCanceledException) when (ct.IsCancellationRequested)
             {
@@ -927,6 +935,16 @@ public sealed class SearchRunner(
 
         public List<IngestLead> Pending { get; } = [];
         public string CurrentTask { get; set; } = "Preparing";
+
+        /// <summary>
+        /// Businesses the in-flight provider call has discovered so far. Shown
+        /// in the task label while a task runs, then reset — the committed
+        /// total lives in <see cref="Found"/>. Written from provider worker
+        /// threads and read by the heartbeat, so it is volatile rather than a
+        /// plain field.
+        /// </summary>
+        public volatile int LiveDiscovered;
+
         public int TotalTasks { get; set; }
         public bool LeaseLost { get; set; }
 
@@ -970,24 +988,37 @@ public sealed class SearchRunner(
             if (_recent.Count > MaxRecentResults) _recent.RemoveRange(MaxRecentResults, _recent.Count - MaxRecentResults);
         }
 
-        public JobHeartbeatRequest BuildHeartbeat(string? completedTaskKey) => new()
+        public JobHeartbeatRequest BuildHeartbeat(string? completedTaskKey)
         {
-            WorkerId = WorkerId,
-            LeaseSeconds = Options.LeaseSeconds,
-            CurrentTask = CurrentTask.Length > 256 ? CurrentTask[..256] : CurrentTask,
-            CompletedTaskKey = completedTaskKey,
-            TotalTasks = TotalTasks,
-            Found = Found,
-            Saved = Saved,
-            Duplicates = Duplicates,
-            Enriched = Enriched,
-            EnrichmentFailed = EnrichmentFailed,
-            EmailsVerified = EmailsVerified,
-            WhatsAppReachable = WhatsAppReachable,
-            Skipped = Skipped,
-            Failed = Failed,
-            RecentResultsJson = JsonSerializer.Serialize(_recent, LiveResultJson),
-        };
+            // A task in flight reports what it has found so far in its label, so
+            // a long browser sweep visibly advances instead of sitting on the
+            // same line with "0 found" until the whole task commits.
+            var discovered = LiveDiscovered;
+
+            var label = discovered > 0 ? $"{CurrentTask} — {discovered} found so far" : CurrentTask;
+
+            return new JobHeartbeatRequest
+            {
+                WorkerId = WorkerId,
+                LeaseSeconds = Options.LeaseSeconds,
+                CurrentTask = label.Length > 256 ? label[..256] : label,
+                CompletedTaskKey = completedTaskKey,
+                TotalTasks = TotalTasks,
+                // The in-flight count is added on top of the committed total so
+                // the counter climbs during a task, then lands on the real
+                // number when the task commits (LiveDiscovered resets to 0).
+                Found = Found + discovered,
+                Saved = Saved,
+                Duplicates = Duplicates,
+                Enriched = Enriched,
+                EnrichmentFailed = EnrichmentFailed,
+                EmailsVerified = EmailsVerified,
+                WhatsAppReachable = WhatsAppReachable,
+                Skipped = Skipped,
+                Failed = Failed,
+                RecentResultsJson = JsonSerializer.Serialize(_recent, LiveResultJson),
+            };
+        }
     }
 
     /// <summary>A result row for the live progress panel.</summary>
