@@ -1,0 +1,2 @@
+cd "C:\Users\Muhammad Ahmad Amin\Documents\GitHub\lead-scraper\backend\tools\LinkedInLogin"
+dotnet run -- "C:\Users\Muhammad Ahmad Amin\Documents\GitHub\lead-scraper\backend\src\LeadMine.Api\App_Data\linkedin-session.json"
