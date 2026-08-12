@@ -49,7 +49,7 @@ public sealed partial class PlaywrightLinkedInCompanyService(
 
         try
         {
-            var aboutUrl = await ResolveCompanyAboutUrlAsync(page, name, existingLinkedInUrl, context, ct);
+            var aboutUrl = await ResolveCompanyAboutUrlAsync(page, name, existingLinkedInUrl, session, context, ct);
             if (aboutUrl is null) return null;
 
             if (page.Url != aboutUrl)
@@ -62,12 +62,13 @@ public sealed partial class PlaywrightLinkedInCompanyService(
                 });
             }
 
-            if (LinkedInSessionManager.IsLoggedOutUrl(page.Url))
-            {
-                throw new ProviderException(
-                    "LinkedIn session expired — re-run backend/tools/LinkedInLogin and re-upload storageState.json.",
-                    ProviderFailure.MissingApiKey);
-            }
+            // Checked before the human-pacing delay below, not after: no point
+            // waiting several seconds to be polite on a page that is already a
+            // restriction warning.
+            await EnsureNotRestrictedAsync(page, session);
+
+            await PlaywrightBrowserManager.RandomDelayAsync(
+                context.Options.LinkedInMinDelayMs, context.Options.LinkedInMaxDelayMs, ct);
 
             // The About page renders its detail fields client-side; reading them
             // right after DOMContentLoaded finds nothing there yet. "Industry" is
@@ -115,7 +116,7 @@ public sealed partial class PlaywrightLinkedInCompanyService(
     /// the website crawler) — a direct link beats re-searching by name.
     /// </summary>
     private static async Task<string?> ResolveCompanyAboutUrlAsync(
-        IPage page, string name, string? existingLinkedInUrl, ProviderContext context, CancellationToken ct)
+        IPage page, string name, string? existingLinkedInUrl, LinkedInSessionManager session, ProviderContext context, CancellationToken ct)
     {
         var existingSlug = existingLinkedInUrl is null ? null : CompanySlugRegex().Match(existingLinkedInUrl);
 
@@ -124,7 +125,7 @@ public sealed partial class PlaywrightLinkedInCompanyService(
             return $"https://www.linkedin.com/company/{existingSlug.Groups[1].Value}/about/";
         }
 
-        var slug = await ResolveCompanySlugByNameAsync(page, name, context, ct);
+        var slug = await ResolveCompanySlugByNameAsync(page, name, session, context, ct);
         return slug is null ? null : $"https://www.linkedin.com/company/{slug}/about/";
     }
 
@@ -136,7 +137,7 @@ public sealed partial class PlaywrightLinkedInCompanyService(
     /// step.
     /// </summary>
     public static async Task<string?> ResolveCompanySlugByNameAsync(
-        IPage page, string companyName, ProviderContext context, CancellationToken ct)
+        IPage page, string companyName, LinkedInSessionManager session, ProviderContext context, CancellationToken ct)
     {
         var searchUrl = $"https://www.linkedin.com/search/results/companies/?keywords={Uri.EscapeDataString(companyName)}";
 
@@ -147,12 +148,10 @@ public sealed partial class PlaywrightLinkedInCompanyService(
             Timeout = context.Options.RequestTimeoutMs,
         });
 
-        if (LinkedInSessionManager.IsLoggedOutUrl(page.Url))
-        {
-            throw new ProviderException(
-                "LinkedIn session expired — re-run backend/tools/LinkedInLogin and re-upload storageState.json.",
-                ProviderFailure.MissingApiKey);
-        }
+        await EnsureNotRestrictedAsync(page, session);
+
+        await PlaywrightBrowserManager.RandomDelayAsync(
+            context.Options.LinkedInMinDelayMs, context.Options.LinkedInMaxDelayMs, ct);
 
         var links = await page.EvalOnSelectorAllAsync<string[]>(
             "a[href*='/company/']", "els => els.map(e => e.href)");
@@ -263,6 +262,34 @@ public sealed partial class PlaywrightLinkedInCompanyService(
     {
         var match = CompanySlugRegex().Match(url);
         return match.Success ? $"https://www.linkedin.com/company/{match.Groups[1].Value}/" : url;
+    }
+
+    /// <summary>
+    /// Throws a clear, fatal <see cref="ProviderException"/> on either a dead
+    /// session (logged out) or an active restriction warning — tripping
+    /// <see cref="LinkedInSessionManager.ReportRestriction"/> for the latter so
+    /// every other LinkedIn call in the app backs off too, not just this one.
+    /// Shared by every navigation in this class and in
+    /// <see cref="PlaywrightLinkedInPeopleService"/> rather than duplicated.
+    /// </summary>
+    internal static async Task EnsureNotRestrictedAsync(IPage page, LinkedInSessionManager session)
+    {
+        if (LinkedInSessionManager.IsLoggedOutUrl(page.Url))
+        {
+            throw new ProviderException(
+                "LinkedIn session expired — re-run backend/tools/LinkedInLogin and re-upload storageState.json.",
+                ProviderFailure.MissingApiKey);
+        }
+
+        if (await LinkedInSessionManager.IsRestrictedContentAsync(page))
+        {
+            session.ReportRestriction($"a restriction warning at {page.Url}");
+
+            throw new ProviderException(
+                "LinkedIn flagged this account's traffic with a restriction warning. LinkedIn automation for " +
+                "the whole app is now paused as a precaution — see the readiness message for how long.",
+                ProviderFailure.MissingApiKey);
+        }
     }
 
     [GeneratedRegex(@"linkedin\.com/company/([^/?]+)", RegexOptions.IgnoreCase)]

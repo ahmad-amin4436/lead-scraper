@@ -192,12 +192,7 @@ public sealed class PlaywrightLinkedInPeopleService(
                 Timeout = context.Options.RequestTimeoutMs,
             });
 
-            if (LinkedInSessionManager.IsLoggedOutUrl(page.Url))
-            {
-                throw new ProviderException(
-                    "LinkedIn session expired — re-run backend/tools/LinkedInLogin and re-upload storageState.json.",
-                    ProviderFailure.MissingApiKey);
-            }
+            await PlaywrightLinkedInCompanyService.EnsureNotRestrictedAsync(page, session);
 
             // Search results render client-side; reading immediately after
             // DOMContentLoaded finds nothing there yet (confirmed live — 0
@@ -262,7 +257,7 @@ public sealed class PlaywrightLinkedInPeopleService(
 
                 await page.Mouse.WheelAsync(0, 2200);
                 await PlaywrightBrowserManager.RandomDelayAsync(
-                    context.Options.PlaywrightMinDelayMs, context.Options.PlaywrightMaxDelayMs, ct);
+                    context.Options.LinkedInMinDelayMs, context.Options.LinkedInMaxDelayMs, ct);
             }
 
             // Nothing usable: say *why*, rather than letting the caller report

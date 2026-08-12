@@ -118,7 +118,7 @@ public sealed class LinkedInPeopleSearchRunner(
 
         try
         {
-            return await PlaywrightLinkedInCompanyService.ResolveCompanySlugByNameAsync(page, companyName, context, ct);
+            return await PlaywrightLinkedInCompanyService.ResolveCompanySlugByNameAsync(page, companyName, session, context, ct);
         }
         finally
         {

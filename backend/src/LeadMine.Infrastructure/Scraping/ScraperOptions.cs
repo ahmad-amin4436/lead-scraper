@@ -151,6 +151,43 @@ public sealed class ScraperOptions
     [Range(1, 1000)]
     public int LinkedInMaxSearchesPerDay { get; set; } = 80;
 
+    /// <summary>
+    /// Where the daily LinkedIn search count and any active restriction
+    /// cooldown (see <see cref="LinkedInRestrictionCooldownHours"/>) are
+    /// persisted, so an app restart — routine during a deploy, common during
+    /// development — cannot silently reset LinkedIn's own throttle back to
+    /// zero and undo the protection <see cref="LinkedInMaxSearchesPerDay"/>
+    /// exists to provide.
+    /// </summary>
+    public string LinkedInUsageStatePath { get; set; } = "App_Data/linkedin-usage.json";
+
+    /// <summary>
+    /// Lower/upper bound of the random delay between LinkedIn actions
+    /// specifically — deliberately wider than <see cref="PlaywrightMinDelayMs"/>/
+    /// <see cref="PlaywrightMaxDelayMs"/>, and not shared with them. Google Maps
+    /// is a public page with no account behind a request; LinkedIn is a real,
+    /// logged-in account doing something its terms prohibit (see
+    /// <c>LinkedInSessionManager</c>'s remarks), so it gets the more
+    /// conservative pacing of the two on purpose.
+    /// </summary>
+    [Range(0, 60_000)]
+    public int LinkedInMinDelayMs { get; set; } = 2500;
+
+    [Range(0, 180_000)]
+    public int LinkedInMaxDelayMs { get; set; } = 6000;
+
+    /// <summary>
+    /// How long every LinkedIn-backed call refuses to run, across every job and
+    /// every user, after one of them detects a restriction warning on the
+    /// account — not a plain logged-out redirect (the session simply died),
+    /// but an active signal LinkedIn is flagging this account's traffic. Long
+    /// enough that whatever tripped it has had time to settle; a human can
+    /// still end it early by re-running <c>backend/tools/LinkedInLogin</c>,
+    /// which counts as a fresh confirmation the account is fine.
+    /// </summary>
+    [Range(1, 168)]
+    public int LinkedInRestrictionCooldownHours { get; set; } = 24;
+
     /// <summary>Where a failed extraction's screenshot + HTML dump are written, for debugging selector drift.</summary>
     public string ScrapeFailureLogPath { get; set; } = "App_Data/scrape-failures";
 
