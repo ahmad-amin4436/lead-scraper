@@ -111,7 +111,10 @@ export async function backendRequest(
     fetch(url, {
       method: init.method ?? 'GET',
       headers: {
-        ...(init.body ? { 'Content-Type': 'application/json' } : {}),
+        // FormData (proxying a file upload through to the .NET API) needs
+        // undici to set its own Content-Type with a multipart boundary —
+        // forcing JSON here would send the file as an unparseable body.
+        ...(init.body && !(init.body instanceof FormData) ? { 'Content-Type': 'application/json' } : {}),
         ...(token ? { Authorization: `Bearer ${token}` } : {}),
         ...(init.headers as HeadersInit),
       },

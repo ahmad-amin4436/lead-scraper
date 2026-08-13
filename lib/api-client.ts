@@ -25,7 +25,10 @@ export async function apiFetch<T>(input: string, init?: RequestInit): Promise<T>
     response = await fetch(input, {
       ...init,
       headers: {
-        ...(init?.body ? { 'Content-Type': 'application/json' } : {}),
+        // FormData (a file upload) needs the browser to set its own
+        // Content-Type with a multipart boundary — forcing JSON here would
+        // send the file as an unparseable body.
+        ...(init?.body && !(init.body instanceof FormData) ? { 'Content-Type': 'application/json' } : {}),
         ...init?.headers,
       },
     });

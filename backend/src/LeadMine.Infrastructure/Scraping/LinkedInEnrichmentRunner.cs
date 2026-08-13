@@ -95,7 +95,7 @@ public sealed class LinkedInEnrichmentRunner(
     {
         var ct = abort.Token;
 
-        var notReady = linkedInCompany.Readiness();
+        var notReady = await linkedInCompany.ReadinessAsync(state.OwnerUserId, ct);
         if (notReady is not null)
         {
             await CompleteAsync(state.JobId, state.WorkerId, SearchJobStatus.Failed, notReady, stoppingToken);
@@ -143,7 +143,7 @@ public sealed class LinkedInEnrichmentRunner(
 
             try
             {
-                company = await linkedInCompany.EnrichAsync(lead.Name, lead.LinkedIn, context, ct);
+                company = await linkedInCompany.EnrichAsync(lead.Name, lead.LinkedIn, state.OwnerUserId, context, ct);
 
                 var linkedInUrl = string.IsNullOrWhiteSpace(lead.LinkedIn) ? company?.LinkedInUrl : lead.LinkedIn;
 
@@ -154,7 +154,7 @@ public sealed class LinkedInEnrichmentRunner(
                 if (!string.IsNullOrWhiteSpace(linkedInUrl))
                 {
                     people = await linkedInPeople.SearchAsync(
-                        lead.Name, state.Request.MaxDecisionMakersPerCompany, context, ct);
+                        lead.Name, state.Request.MaxDecisionMakersPerCompany, state.OwnerUserId, context, ct);
                 }
             }
             catch (OperationCanceledException) when (ct.IsCancellationRequested)

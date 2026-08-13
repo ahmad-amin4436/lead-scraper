@@ -139,27 +139,16 @@ public sealed class ScraperOptions
     [Range(0, 120_000)]
     public int PlaywrightMaxDelayMs { get; set; } = 2500;
 
-    /// <summary>Where a persisted LinkedIn login session (storageState.json) is read from.</summary>
-    public string LinkedInStorageStatePath { get; set; } = "App_Data/linkedin-session.json";
-
     /// <summary>
-    /// Self-imposed cap on LinkedIn company/people searches per UTC day.
-    /// LinkedIn throttles accounts that search heavily ("commercial use
-    /// limit"); finding that ceiling ourselves is cheaper than finding it by
-    /// getting the dedicated account restricted.
+    /// Self-imposed cap on LinkedIn company/people searches per UTC day, per
+    /// user account. LinkedIn throttles accounts that search heavily
+    /// ("commercial use limit"); finding that ceiling ourselves is cheaper
+    /// than finding it by getting a user's account restricted. Persisted per
+    /// user on <c>LinkedInAccountSession</c> (see <c>LinkedInSessionManager</c>),
+    /// not a shared file — an app restart cannot reset it.
     /// </summary>
     [Range(1, 1000)]
     public int LinkedInMaxSearchesPerDay { get; set; } = 80;
-
-    /// <summary>
-    /// Where the daily LinkedIn search count and any active restriction
-    /// cooldown (see <see cref="LinkedInRestrictionCooldownHours"/>) are
-    /// persisted, so an app restart — routine during a deploy, common during
-    /// development — cannot silently reset LinkedIn's own throttle back to
-    /// zero and undo the protection <see cref="LinkedInMaxSearchesPerDay"/>
-    /// exists to provide.
-    /// </summary>
-    public string LinkedInUsageStatePath { get; set; } = "App_Data/linkedin-usage.json";
 
     /// <summary>
     /// Lower/upper bound of the random delay between LinkedIn actions
@@ -177,13 +166,14 @@ public sealed class ScraperOptions
     public int LinkedInMaxDelayMs { get; set; } = 6000;
 
     /// <summary>
-    /// How long every LinkedIn-backed call refuses to run, across every job and
-    /// every user, after one of them detects a restriction warning on the
-    /// account — not a plain logged-out redirect (the session simply died),
-    /// but an active signal LinkedIn is flagging this account's traffic. Long
-    /// enough that whatever tripped it has had time to settle; a human can
-    /// still end it early by re-running <c>backend/tools/LinkedInLogin</c>,
-    /// which counts as a fresh confirmation the account is fine.
+    /// How long a user's LinkedIn-backed calls refuse to run after one of them
+    /// detects a restriction warning on that user's account — not a plain
+    /// logged-out redirect (the session simply died), but an active signal
+    /// LinkedIn is flagging their account's traffic. Scoped to that one user;
+    /// it says nothing about anyone else's account. Long enough that whatever
+    /// tripped it has had time to settle; the user can still end it early by
+    /// re-running <c>backend/tools/LinkedInLogin</c> and re-uploading, which
+    /// counts as a fresh confirmation the account is fine.
     /// </summary>
     [Range(1, 168)]
     public int LinkedInRestrictionCooldownHours { get; set; } = 24;

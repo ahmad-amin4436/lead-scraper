@@ -5,6 +5,7 @@ import { AlertTriangle, CheckCircle2, Contact2, Plus, Search, Sparkles, XCircle 
 import { toast } from 'sonner';
 
 import { PageHeader } from '@/components/shared/page-header';
+import { LinkedInConnectDialog } from '@/components/linkedin/linkedin-connect-dialog';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
@@ -187,6 +188,8 @@ export function LinkedInEnrichmentView() {
           ) : undefined
         }
       />
+
+      <LinkedInConnectDialog />
 
       {job ? (
         <div className="grid gap-6 lg:grid-cols-[minmax(0,1.5fr)_minmax(0,1fr)]">

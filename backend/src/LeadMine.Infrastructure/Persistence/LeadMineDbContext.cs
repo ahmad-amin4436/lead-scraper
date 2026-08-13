@@ -43,6 +43,8 @@ public class LeadMineDbContext(
 
     public DbSet<Person> People => Set<Person>();
 
+    public DbSet<LinkedInAccountSession> LinkedInAccountSessions => Set<LinkedInAccountSession>();
+
     protected override void OnModelCreating(ModelBuilder builder)
     {
         base.OnModelCreating(builder);

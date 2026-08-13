@@ -90,16 +90,18 @@ public sealed class PlaywrightLinkedInPeopleService(
         "branch manager", "practice lead", "team lead",
     ];
 
-    public string? Readiness() => session.Readiness();
+    public Task<string?> ReadinessAsync(Guid userId, CancellationToken ct) => session.ReadinessAsync(userId, ct);
 
     /// <summary>
     /// Used by automatic enrichment (<c>LinkedInEnrichmentRunner</c>): searches
     /// LinkedIn for <paramref name="companyName"/> and keeps only cards whose
-    /// headline matches <see cref="DecisionMakerTitles"/>.
+    /// headline matches <see cref="DecisionMakerTitles"/>. Runs against
+    /// <paramref name="userId"/>'s own LinkedIn session.
     /// </summary>
     public Task<IReadOnlyList<LinkedInPersonResult>> SearchAsync(
         string companyName,
         int maxResults,
+        Guid userId,
         ProviderContext context,
         CancellationToken ct)
     {
@@ -108,6 +110,7 @@ public sealed class PlaywrightLinkedInPeopleService(
         return ScrollAndCollectAsync(
             peopleUrl,
             maxResults,
+            userId,
             context,
             card =>
             {
@@ -124,13 +127,15 @@ public sealed class PlaywrightLinkedInPeopleService(
     /// (LinkedIn's search keywords are a single free-text field — there is no
     /// separate "restrict to this company" parameter that still works, see the
     /// class remarks), keeping every match rather than only decision-maker-shaped
-    /// ones, since the caller already chose the filter.
+    /// ones, since the caller already chose the filter. Runs against
+    /// <paramref name="userId"/>'s own LinkedIn session.
     /// </summary>
     public Task<IReadOnlyList<LinkedInPersonResult>> SearchByKeywordAsync(
         string companyName,
         string? keywords,
         string? locationFilter,
         int maxResults,
+        Guid userId,
         ProviderContext context,
         CancellationToken ct)
     {
@@ -140,6 +145,7 @@ public sealed class PlaywrightLinkedInPeopleService(
         return ScrollAndCollectAsync(
             peopleUrl,
             maxResults,
+            userId,
             context,
             card =>
             {
@@ -170,17 +176,18 @@ public sealed class PlaywrightLinkedInPeopleService(
     private async Task<IReadOnlyList<LinkedInPersonResult>> ScrollAndCollectAsync(
         string peopleUrl,
         int maxResults,
+        Guid userId,
         ProviderContext context,
         Func<ProfileCard, (bool Keep, bool IsDecisionMaker, string Role)> keep,
         string failureContext,
         CancellationToken ct)
     {
-        var notReady = Readiness();
+        var notReady = await ReadinessAsync(userId, ct);
         if (notReady is not null) throw new ProviderException(notReady, ProviderFailure.MissingApiKey);
 
-        session.EnsureSearchBudget();
+        await session.EnsureSearchBudgetAsync(userId, ct);
 
-        await using var lease = await session.AcquireContextAsync(ct);
+        await using var lease = await session.AcquireContextAsync(userId, ct);
         var page = await lease.Context.NewPageAsync();
 
         try
@@ -192,7 +199,7 @@ public sealed class PlaywrightLinkedInPeopleService(
                 Timeout = context.Options.RequestTimeoutMs,
             });
 
-            await PlaywrightLinkedInCompanyService.EnsureNotRestrictedAsync(page, session);
+            await PlaywrightLinkedInCompanyService.EnsureNotRestrictedAsync(page, session, userId, ct);
 
             // Search results render client-side; reading immediately after
             // DOMContentLoaded finds nothing there yet (confirmed live — 0

@@ -586,7 +586,7 @@ public sealed class SearchRunner(
                 {
                     try
                     {
-                        var company = await linkedInCompany.EnrichAsync(lead.Name, lead.LinkedIn, state.ProviderContext, ct);
+                        var company = await linkedInCompany.EnrichAsync(lead.Name, lead.LinkedIn, state.OwnerUserId, state.ProviderContext, ct);
 
                         if (company is not null)
                         {
@@ -664,7 +664,7 @@ public sealed class SearchRunner(
             try
             {
                 var people = await linkedInPeople.SearchAsync(
-                    business.Name, state.Payload.MaxDecisionMakersPerCompany, state.ProviderContext, ct);
+                    business.Name, state.Payload.MaxDecisionMakersPerCompany, state.OwnerUserId, state.ProviderContext, ct);
 
                 foreach (var person in people)
                 {

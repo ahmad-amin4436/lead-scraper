@@ -45,3 +45,16 @@ export interface StartLinkedInEnrichmentRequest {
   businessIds: string[];
   maxDecisionMakersPerCompany?: number;
 }
+
+/**
+ * The caller's own LinkedIn session status — never the session content
+ * itself. `null` (from the hook, not this shape) means no session has been
+ * uploaded yet.
+ */
+export interface LinkedInSessionStatus {
+  uploadedAt: string;
+  searchesToday: number;
+  /** Set while a restriction cooldown is active; null once it's expired or was never tripped. */
+  restrictedUntil: string | null;
+  restrictedReason: string | null;
+}

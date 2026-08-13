@@ -1,11 +1,17 @@
 // LeadMine LinkedIn login helper.
 //
 // The server has no desktop to log in interactively, so this runs on your own
-// machine instead: it opens a real, visible Chromium window, you log into the
-// LinkedIn account LeadMine is dedicating to browser automation by hand, then
-// this saves the resulting session (cookies + local storage) to a file you
-// upload to the server. No LinkedIn credential is ever typed into, stored on,
-// or sent to the server itself — only the already-authenticated session is.
+// machine instead: it opens a real, visible Chromium window, you log into
+// your own LinkedIn account by hand, then this saves the resulting session
+// (cookies + local storage) to a file you upload through the app. No
+// LinkedIn credential is ever typed into, stored on, or sent to the server
+// itself — only the already-authenticated session is.
+//
+// Each app user runs this for their own LinkedIn account and uploads the
+// result under Settings > LinkedIn Account — LeadMine does not use one
+// shared, dedicated automation account. That spreads LinkedIn traffic across
+// real, individually-owned accounts, and means each user accepts LinkedIn's
+// terms-of-service risk for their own account, on their own behalf.
 //
 // Treat the output file like a password: anyone holding it is logged into
 // that LinkedIn account.
@@ -19,10 +25,10 @@ var outputPath = Path.GetFullPath(args.Length > 0 ? args[0] : "storageState.json
 Console.WriteLine("LeadMine LinkedIn login helper");
 Console.WriteLine("===============================");
 Console.WriteLine();
-Console.WriteLine("A Chromium window is about to open. Log into the LinkedIn account you are");
-Console.WriteLine("dedicating to LeadMine's automation — the same one you've accepted may");
-Console.WriteLine("eventually get restricted for it. Once you can see your LinkedIn feed,");
-Console.WriteLine("come back to this window and press Enter.");
+Console.WriteLine("A Chromium window is about to open. Log into your own LinkedIn account — the");
+Console.WriteLine("one you're using with LeadMine's automation, and accept that it may eventually");
+Console.WriteLine("get restricted for it. Once you can see your LinkedIn feed, come back to this");
+Console.WriteLine("window and press Enter.");
 Console.WriteLine();
 
 using var playwright = await Playwright.CreateAsync();
@@ -49,6 +55,6 @@ await browser.CloseAsync();
 Console.WriteLine();
 Console.WriteLine($"Saved session to: {outputPath}");
 Console.WriteLine();
-Console.WriteLine("Upload this file to the server at the path configured in Scraper:LinkedInStorageStatePath");
-Console.WriteLine("(default: App_Data/linkedin-session.json). Re-run this tool and re-upload whenever the");
-Console.WriteLine("server reports the LinkedIn session has expired.");
+Console.WriteLine("Upload this file from Settings > LinkedIn Account in the app, signed in as");
+Console.WriteLine("yourself — not to a server folder. Re-run this tool and re-upload whenever the");
+Console.WriteLine("app reports your LinkedIn session has expired or been restricted.");

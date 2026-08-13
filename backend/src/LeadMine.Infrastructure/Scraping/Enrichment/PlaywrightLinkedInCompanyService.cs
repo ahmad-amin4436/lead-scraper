@@ -28,28 +28,31 @@ public sealed partial class PlaywrightLinkedInCompanyService(
     LinkedInSessionManager session,
     ILogger<PlaywrightLinkedInCompanyService> logger)
 {
-    public string? Readiness() => session.Readiness();
+    public Task<string?> ReadinessAsync(Guid userId, CancellationToken ct) => session.ReadinessAsync(userId, ct);
 
     /// <summary>
     /// Null when nothing on LinkedIn matched. Takes plain fields rather than a
     /// <see cref="Domain.Entities.Business"/> entity because the caller
     /// (<c>SearchRunner</c>) runs this before a discovered lead has been saved.
+    /// Runs against <paramref name="userId"/>'s own LinkedIn session — see
+    /// <see cref="LinkedInSessionManager"/>'s remarks.
     /// </summary>
     public async Task<LinkedInCompanyResult?> EnrichAsync(
         string name,
         string? existingLinkedInUrl,
+        Guid userId,
         ProviderContext context,
         CancellationToken ct)
     {
-        var notReady = Readiness();
+        var notReady = await ReadinessAsync(userId, ct);
         if (notReady is not null) throw new ProviderException(notReady, ProviderFailure.MissingApiKey);
 
-        await using var lease = await session.AcquireContextAsync(ct);
+        await using var lease = await session.AcquireContextAsync(userId, ct);
         var page = await lease.Context.NewPageAsync();
 
         try
         {
-            var aboutUrl = await ResolveCompanyAboutUrlAsync(page, name, existingLinkedInUrl, session, context, ct);
+            var aboutUrl = await ResolveCompanyAboutUrlAsync(page, name, existingLinkedInUrl, userId, session, context, ct);
             if (aboutUrl is null) return null;
 
             if (page.Url != aboutUrl)
@@ -65,7 +68,7 @@ public sealed partial class PlaywrightLinkedInCompanyService(
             // Checked before the human-pacing delay below, not after: no point
             // waiting several seconds to be polite on a page that is already a
             // restriction warning.
-            await EnsureNotRestrictedAsync(page, session);
+            await EnsureNotRestrictedAsync(page, session, userId, ct);
 
             await PlaywrightBrowserManager.RandomDelayAsync(
                 context.Options.LinkedInMinDelayMs, context.Options.LinkedInMaxDelayMs, ct);
@@ -116,7 +119,7 @@ public sealed partial class PlaywrightLinkedInCompanyService(
     /// the website crawler) — a direct link beats re-searching by name.
     /// </summary>
     private static async Task<string?> ResolveCompanyAboutUrlAsync(
-        IPage page, string name, string? existingLinkedInUrl, LinkedInSessionManager session, ProviderContext context, CancellationToken ct)
+        IPage page, string name, string? existingLinkedInUrl, Guid userId, LinkedInSessionManager session, ProviderContext context, CancellationToken ct)
     {
         var existingSlug = existingLinkedInUrl is null ? null : CompanySlugRegex().Match(existingLinkedInUrl);
 
@@ -125,7 +128,7 @@ public sealed partial class PlaywrightLinkedInCompanyService(
             return $"https://www.linkedin.com/company/{existingSlug.Groups[1].Value}/about/";
         }
 
-        var slug = await ResolveCompanySlugByNameAsync(page, name, session, context, ct);
+        var slug = await ResolveCompanySlugByNameAsync(page, name, userId, session, context, ct);
         return slug is null ? null : $"https://www.linkedin.com/company/{slug}/about/";
     }
 
@@ -137,7 +140,7 @@ public sealed partial class PlaywrightLinkedInCompanyService(
     /// step.
     /// </summary>
     public static async Task<string?> ResolveCompanySlugByNameAsync(
-        IPage page, string companyName, LinkedInSessionManager session, ProviderContext context, CancellationToken ct)
+        IPage page, string companyName, Guid userId, LinkedInSessionManager session, ProviderContext context, CancellationToken ct)
     {
         var searchUrl = $"https://www.linkedin.com/search/results/companies/?keywords={Uri.EscapeDataString(companyName)}";
 
@@ -148,7 +151,7 @@ public sealed partial class PlaywrightLinkedInCompanyService(
             Timeout = context.Options.RequestTimeoutMs,
         });
 
-        await EnsureNotRestrictedAsync(page, session);
+        await EnsureNotRestrictedAsync(page, session, userId, ct);
 
         await PlaywrightBrowserManager.RandomDelayAsync(
             context.Options.LinkedInMinDelayMs, context.Options.LinkedInMaxDelayMs, ct);
@@ -267,27 +270,27 @@ public sealed partial class PlaywrightLinkedInCompanyService(
     /// <summary>
     /// Throws a clear, fatal <see cref="ProviderException"/> on either a dead
     /// session (logged out) or an active restriction warning — tripping
-    /// <see cref="LinkedInSessionManager.ReportRestriction"/> for the latter so
-    /// every other LinkedIn call in the app backs off too, not just this one.
-    /// Shared by every navigation in this class and in
+    /// <see cref="LinkedInSessionManager.ReportRestrictionAsync"/> for the
+    /// latter so every other LinkedIn call for this same user backs off too,
+    /// not just this one. Shared by every navigation in this class and in
     /// <see cref="PlaywrightLinkedInPeopleService"/> rather than duplicated.
     /// </summary>
-    internal static async Task EnsureNotRestrictedAsync(IPage page, LinkedInSessionManager session)
+    internal static async Task EnsureNotRestrictedAsync(IPage page, LinkedInSessionManager session, Guid userId, CancellationToken ct)
     {
         if (LinkedInSessionManager.IsLoggedOutUrl(page.Url))
         {
             throw new ProviderException(
-                "LinkedIn session expired — re-run backend/tools/LinkedInLogin and re-upload storageState.json.",
+                "Your LinkedIn session expired — re-run backend/tools/LinkedInLogin and upload a fresh storageState.json from Settings.",
                 ProviderFailure.MissingApiKey);
         }
 
         if (await LinkedInSessionManager.IsRestrictedContentAsync(page))
         {
-            session.ReportRestriction($"a restriction warning at {page.Url}");
+            await session.ReportRestrictionAsync(userId, $"a restriction warning at {page.Url}", ct);
 
             throw new ProviderException(
-                "LinkedIn flagged this account's traffic with a restriction warning. LinkedIn automation for " +
-                "the whole app is now paused as a precaution — see the readiness message for how long.",
+                "LinkedIn flagged your account's traffic with a restriction warning. Your LinkedIn automation " +
+                "is now paused as a precaution — see the readiness message for how long.",
                 ProviderFailure.MissingApiKey);
         }
     }

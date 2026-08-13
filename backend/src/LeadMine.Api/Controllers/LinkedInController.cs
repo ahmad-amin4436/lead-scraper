@@ -5,6 +5,7 @@ using LeadMine.Application.DTOs;
 using LeadMine.Application.Interfaces;
 using LeadMine.Domain.Enums;
 using LeadMine.Infrastructure.Authorization;
+using LeadMine.Infrastructure.Scraping.Browser;
 using LeadMine.Infrastructure.Services;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
@@ -24,10 +25,20 @@ namespace LeadMine.Api.Controllers;
 /// (<c>ScraperWorkerService</c>), just tagged <see cref="JobKind.LinkedInEnrichment"/>
 /// and run by <c>LinkedInEnrichmentRunner</c> instead of <c>SearchRunner</c>.
 /// </para>
+/// <para>
+/// Also owns the self-service LinkedIn session endpoints at the bottom of this
+/// file: each user uploads their own <c>storageState.json</c> (from running
+/// <c>backend/tools/LinkedInLogin</c> on their own machine, logged into their
+/// own LinkedIn account) rather than the app sharing one dedicated account —
+/// see <see cref="LinkedInSessionManager"/>'s remarks for why.
+/// </para>
 /// </summary>
 [Authorize]
 [Route("api/linkedin")]
-public sealed class LinkedInController(ISearchJobService jobs, ICurrentUser currentUser) : ApiControllerBase
+public sealed class LinkedInController(
+    ISearchJobService jobs,
+    ICurrentUser currentUser,
+    LinkedInSessionManager linkedInSession) : ApiControllerBase
 {
     /// <summary>Queues a batch. Returns immediately — a worker executes it.</summary>
     [HttpPost("enrich-jobs")]
@@ -127,4 +138,76 @@ public sealed class LinkedInController(ISearchJobService jobs, ICurrentUser curr
     [ProducesResponseType(typeof(SearchJobDto), StatusCodes.Status200OK)]
     public async Task<ActionResult<SearchJobDto>> StopPeopleSearchJob(Guid id, CancellationToken ct)
         => FromResult(await jobs.RequestStopAsync(id, ct));
+
+    // --- self-service LinkedIn session (bring your own account) ------------
+    //
+    // No [HasPermission] beyond [Authorize] on these three: they only ever act
+    // on the caller's own row (keyed by their own user id), so there is
+    // nothing here for a permission to additionally gate — the same reasoning
+    // Send Email's signature upload already follows for "manage your own
+    // thing." Using LinkedIn features at all still requires
+    // Permissions.LinkedIn.RunEnrichment / RunPeopleSearch, same as before.
+
+    /// <summary>
+    /// Uploads or replaces the caller's own LinkedIn session: the
+    /// storageState.json produced by running backend/tools/LinkedInLogin on
+    /// their own machine, logged into their own LinkedIn account. Never a
+    /// password — only the already-authenticated session, the same thing that
+    /// tool always produced. A fresh upload also clears any active restriction
+    /// cooldown on their account (see LinkedInSessionManager's remarks): a
+    /// real, manual login is a real confirmation the account is fine.
+    /// </summary>
+    [HttpPost("session")]
+    [ProducesResponseType(StatusCodes.Status204NoContent)]
+    [ProducesResponseType(StatusCodes.Status400BadRequest)]
+    public async Task<IActionResult> UploadSession(IFormFile file, CancellationToken ct)
+    {
+        if (currentUser.UserId is not { } userId) return Unauthorized();
+
+        if (file.Length == 0 || file.Length > 1_000_000)
+        {
+            return BadRequest("storageState.json should be a small file, well under 1MB — this doesn't look right.");
+        }
+
+        using var reader = new StreamReader(file.OpenReadStream());
+        var content = await reader.ReadToEndAsync(ct);
+
+        // A cheap sanity check, not schema validation: catches an obviously
+        // wrong upload (a screenshot, a random document) without pretending to
+        // verify it is actually a valid Playwright storage state.
+        try
+        {
+            using var _ = JsonDocument.Parse(content);
+        }
+        catch (JsonException)
+        {
+            return BadRequest("That doesn't look like a valid storageState.json file.");
+        }
+
+        await linkedInSession.UploadSessionAsync(userId, content, ct);
+        return NoContent();
+    }
+
+    /// <summary>Status for the caller's own session — never the session content itself.</summary>
+    [HttpGet("session")]
+    [ProducesResponseType(typeof(LinkedInSessionStatus), StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status404NotFound)]
+    public async Task<ActionResult<LinkedInSessionStatus>> GetSessionStatus(CancellationToken ct)
+    {
+        if (currentUser.UserId is not { } userId) return Unauthorized();
+
+        var status = await linkedInSession.GetStatusAsync(userId, ct);
+        return status is null ? NotFound() : Ok(status);
+    }
+
+    /// <summary>Removes the caller's own LinkedIn session.</summary>
+    [HttpDelete("session")]
+    [ProducesResponseType(StatusCodes.Status204NoContent)]
+    public async Task<IActionResult> RemoveSession(CancellationToken ct)
+    {
+        if (currentUser.UserId is not { } userId) return Unauthorized();
+
+        await linkedInSession.RemoveSessionAsync(userId, ct);
+        return NoContent();
+    }
 }

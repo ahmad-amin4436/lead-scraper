@@ -60,7 +60,7 @@ public sealed class LinkedInPeopleSearchRunner(
 
         try
         {
-            var notReady = session.Readiness();
+            var notReady = await session.ReadinessAsync(ownerUserId, ct);
             if (notReady is not null)
             {
                 await CompleteAsync(job.Id, workerId, SearchJobStatus.Failed, notReady, stoppingToken);
@@ -75,7 +75,7 @@ public sealed class LinkedInPeopleSearchRunner(
             // PlaywrightLinkedInPeopleService's class remarks), so the resolved
             // slug isn't otherwise needed, but confirming the company exists on
             // LinkedIn first gives a precise error instead of a silent 0-found.
-            var slug = await ResolveSlugAsync(request.CompanyName, context, ct);
+            var slug = await ResolveSlugAsync(request.CompanyName, ownerUserId, context, ct);
             if (slug is null)
             {
                 await CompleteAsync(job.Id, workerId, SearchJobStatus.Failed,
@@ -86,7 +86,7 @@ public sealed class LinkedInPeopleSearchRunner(
             await BeatAsync(job.Id, workerId, options, $"Searching LinkedIn for people at {request.CompanyName}", null, ct);
 
             var people = await linkedInPeople.SearchByKeywordAsync(
-                request.CompanyName, request.Keywords, request.Location, request.MaxResults, context, ct);
+                request.CompanyName, request.Keywords, request.Location, request.MaxResults, ownerUserId, context, ct);
 
             await SaveResultsAsync(job.Id, workerId, ownerUserId, request.CompanyName, people, options, stoppingToken);
 
@@ -111,14 +111,14 @@ public sealed class LinkedInPeopleSearchRunner(
         }
     }
 
-    private async Task<string?> ResolveSlugAsync(string companyName, ProviderContext context, CancellationToken ct)
+    private async Task<string?> ResolveSlugAsync(string companyName, Guid userId, ProviderContext context, CancellationToken ct)
     {
-        await using var lease = await session.AcquireContextAsync(ct);
+        await using var lease = await session.AcquireContextAsync(userId, ct);
         var page = await lease.Context.NewPageAsync();
 
         try
         {
-            return await PlaywrightLinkedInCompanyService.ResolveCompanySlugByNameAsync(page, companyName, session, context, ct);
+            return await PlaywrightLinkedInCompanyService.ResolveCompanySlugByNameAsync(page, companyName, userId, session, context, ct);
         }
         finally
         {

@@ -196,3 +196,21 @@ public class AuditEntryConfiguration : IEntityTypeConfiguration<AuditEntry>
         builder.HasIndex(a => a.Action);
     }
 }
+
+public class LinkedInAccountSessionConfiguration : IEntityTypeConfiguration<LinkedInAccountSession>
+{
+    public void Configure(EntityTypeBuilder<LinkedInAccountSession> builder)
+    {
+        builder.ToTable("LinkedInAccountSessions");
+        builder.HasKey(s => s.Id);
+
+        // No length cap: a real storageState.json runs several KB and grows
+        // with the account's cookie count, not something to bound tightly.
+        builder.Property(s => s.StorageStateJson).IsRequired();
+        builder.Property(s => s.RestrictedReason).HasMaxLength(512);
+
+        // One session per user — every lookup and the upload upsert both go
+        // through this, so it is the hot path for the whole feature.
+        builder.HasIndex(s => s.UserId).IsUnique();
+    }
+}

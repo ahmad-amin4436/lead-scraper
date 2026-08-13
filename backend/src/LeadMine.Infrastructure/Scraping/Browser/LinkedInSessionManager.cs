@@ -1,5 +1,9 @@
-using System.Text.Json;
+using System.Collections.Concurrent;
+using LeadMine.Domain.Entities;
+using LeadMine.Infrastructure.Persistence;
 using LeadMine.Infrastructure.Scraping.Providers;
+using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 using Microsoft.Playwright;
@@ -7,76 +11,62 @@ using Microsoft.Playwright;
 namespace LeadMine.Infrastructure.Scraping.Browser;
 
 /// <summary>
-/// Owns the LinkedIn login session every LinkedIn-backed service borrows a
-/// context from.
+/// Owns every user's own LinkedIn login session, one row per user in
+/// <see cref="LinkedInAccountSession"/>.
 /// <para>
-/// The server has no desktop to log in interactively, so login happens
-/// off-server: <c>backend/tools/LinkedInLogin</c> is a standalone console tool
-/// the user runs on their own machine, logging into the dedicated LinkedIn
-/// account by hand once. It writes a Playwright <c>storageState.json</c>
-/// (cookies + local storage), which gets uploaded to the server at
-/// <see cref="ScraperOptions.LinkedInStorageStatePath"/>. Every context this
-/// class hands out loads that file, so it starts already authenticated — no
-/// LinkedIn credential is ever stored or entered on the server itself.
+/// Each app user brings their own LinkedIn account rather than the whole app
+/// sharing one dedicated automation account: <c>backend/tools/LinkedInLogin</c>
+/// runs on that user's own machine (the server has no desktop to log in
+/// interactively), they log into their own LinkedIn account by hand, and the
+/// resulting <c>storageState.json</c> is uploaded through the app — never a
+/// password, only the already-authenticated session — and stored against
+/// their user id. This spreads LinkedIn traffic across real,
+/// individually-owned accounts instead of concentrating all of it on one thin
+/// account with no network of its own, and each user accepts LinkedIn's
+/// terms-of-service risk for their own account, on their own behalf.
 /// </para>
 /// <para>
-/// This account is doing something LinkedIn's terms prohibit, and protecting
-/// it from ever being restricted is a hard, explicit requirement here — not a
-/// nice-to-have. Three things exist specifically for that:
+/// Three things exist specifically to protect those accounts, each now scoped
+/// per user rather than app-wide:
 /// </para>
 /// <list type="number">
 /// <item>
-/// <b>A single, process-wide gate on LinkedIn traffic</b> (<see cref="_linkedInGate"/>).
-/// Every other concurrency knob in this app (<see cref="ScraperOptions.Concurrency"/>,
-/// <see cref="ScraperOptions.PlaywrightConcurrency"/>) was deliberately raised
-/// to let unrelated jobs run in parallel for throughput — Google Maps has no
-/// account behind a request, so nothing there minds. LinkedIn is not mirrored:
-/// several simultaneous tabs hitting linkedin.com from the one saved,
-/// logged-in session at once — because three different users happened to
-/// queue LinkedIn work at the same moment — is a far stronger automation
-/// signal than the same volume spread out one at a time, which is what a
-/// human with one browser actually looks like. This gate is what keeps every
-/// LinkedIn call in the app serialized regardless of how parallel everything
-/// else is.
+/// <b>A per-user gate</b> (<see cref="_gates"/>). One user's own LinkedIn
+/// calls still serialize against each other — several simultaneous tabs on
+/// one logged-in session is a bot signal regardless of whose account it is —
+/// but different users' accounts now run fully independently, since they are
+/// genuinely different accounts with nothing to protect each other from.
 /// </item>
 /// <item>
-/// <b>A persisted daily search cap</b> (<see cref="EnsureSearchBudget"/>),
-/// surviving restarts via <see cref="ScraperOptions.LinkedInUsageStatePath"/>
-/// rather than living only in memory — a restart used to silently reset the
-/// count to zero, which defeats a *daily* cap.
+/// <b>A daily search cap per account</b> (<see cref="EnsureSearchBudgetAsync"/>),
+/// persisted on that user's row so a restart cannot reset it.
 /// </item>
 /// <item>
-/// <b>A circuit breaker</b> (<see cref="ReportRestriction"/>): the moment any
-/// call sees a restriction warning — not just a logged-out redirect, an active
-/// "you're being throttled" signal — every LinkedIn call anywhere in the app
-/// refuses to run for <see cref="ScraperOptions.LinkedInRestrictionCooldownHours"/>,
-/// so a warning does not get immediately followed by three more jobs doing the
-/// exact thing that triggered it.
+/// <b>A circuit breaker per account</b> (<see cref="ReportRestrictionAsync"/>):
+/// the moment a call sees a restriction warning on one user's session, that
+/// user's LinkedIn calls refuse to run for
+/// <see cref="ScraperOptions.LinkedInRestrictionCooldownHours"/> — scoped to
+/// them, not every user in the app, since the warning was about their
+/// account specifically.
 /// </item>
 /// </list>
 /// </summary>
 public sealed class LinkedInSessionManager(
     PlaywrightBrowserManager browser,
+    IServiceScopeFactory scopeFactory,
     IOptionsMonitor<ScraperOptions> optionsMonitor,
     ILogger<LinkedInSessionManager> logger)
 {
-    private readonly object _stateLock = new();
-
-    /// <summary>
-    /// The one gate every LinkedIn browser operation in the app funnels
-    /// through. See the class remarks — this is deliberately not scaled with
-    /// <see cref="ScraperOptions.PlaywrightConcurrency"/>.
-    /// </summary>
-    private readonly SemaphoreSlim _linkedInGate = new(1, 1);
-
-    private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web);
+    /// <summary>One gate per user — see the class remarks.</summary>
+    private readonly ConcurrentDictionary<Guid, SemaphoreSlim> _gates = new();
 
     /// <summary>
     /// High-confidence phrases from LinkedIn's own restriction/verification
-    /// interstitials. Kept narrow on purpose: this trips a 24-hour, app-wide
-    /// pause, so a false positive is expensive — a generic phrase like "please
-    /// verify" (LinkedIn also uses that for routine, unrelated prompts) would
-    /// cost a day of automation for nothing.
+    /// interstitials. Kept narrow on purpose: this trips a 24-hour pause on a
+    /// real user's account, so a false positive is expensive — a generic
+    /// phrase like "please verify" (LinkedIn also uses that for routine,
+    /// unrelated prompts) would cost a day of that user's automation for
+    /// nothing.
     /// </summary>
     private static readonly string[] RestrictionPhrases =
     [
@@ -89,45 +79,40 @@ public sealed class LinkedInSessionManager(
         "restricted from performing this action",
     ];
 
-    /// <summary>Null when ready; otherwise why a LinkedIn-backed call cannot run.</summary>
-    public string? Readiness()
+    private SemaphoreSlim GetGate(Guid userId) => _gates.GetOrAdd(userId, _ => new SemaphoreSlim(1, 1));
+
+    /// <summary>Null when ready; otherwise why this user's LinkedIn-backed calls cannot run.</summary>
+    public async Task<string?> ReadinessAsync(Guid userId, CancellationToken ct)
     {
         var browserReadiness = browser.Readiness();
         if (browserReadiness is not null) return browserReadiness;
 
-        var path = Path.GetFullPath(optionsMonitor.CurrentValue.LinkedInStorageStatePath);
+        await using var scope = scopeFactory.CreateAsyncScope();
+        var db = scope.ServiceProvider.GetRequiredService<LeadMineDbContext>();
 
-        if (!File.Exists(path))
+        var session = await db.LinkedInAccountSessions.AsNoTracking()
+            .FirstOrDefaultAsync(s => s.UserId == userId, ct);
+
+        if (session is null)
         {
-            return $"No LinkedIn session found at {path}. Run backend/tools/LinkedInLogin on your own machine " +
-                   "and upload the resulting storageState.json to this path.";
+            return "No LinkedIn session found for your account. Run backend/tools/LinkedInLogin on your own " +
+                   "machine, logged into your own LinkedIn account, then upload the resulting storageState.json " +
+                   "from Settings.";
         }
 
-        var state = LoadState();
-
-        if (state.RestrictedAt is { } restrictedAt)
+        if (session.RestrictedAt is { } restrictedAt)
         {
-            // Re-uploading the session file is a real, human confirmation the
-            // account is fine — a file written after the restriction was
-            // flagged clears the cooldown early instead of making someone
-            // wait out the clock once they have already checked.
-            var sessionRefreshedSince = File.GetLastWriteTimeUtc(path) > restrictedAt.UtcDateTime;
+            var cooldown = TimeSpan.FromHours(optionsMonitor.CurrentValue.LinkedInRestrictionCooldownHours);
+            var until = restrictedAt + cooldown;
 
-            if (!sessionRefreshedSince)
+            if (until > DateTimeOffset.UtcNow)
             {
-                var cooldown = TimeSpan.FromHours(optionsMonitor.CurrentValue.LinkedInRestrictionCooldownHours);
-                var until = restrictedAt + cooldown;
+                var remainingHours = (until - DateTimeOffset.UtcNow).TotalHours;
+                var reason = string.IsNullOrWhiteSpace(session.RestrictedReason) ? "a restriction warning" : session.RestrictedReason;
 
-                if (until > DateTimeOffset.UtcNow)
-                {
-                    var remainingHours = (until - DateTimeOffset.UtcNow).TotalHours;
-                    var reason = string.IsNullOrWhiteSpace(state.RestrictedReason) ? "a restriction warning" : state.RestrictedReason;
-
-                    return $"LinkedIn automation is paused until {until:u} after {reason} " +
-                           $"(about {remainingHours:F1}h left). This is a deliberate cooldown to protect the " +
-                           "account, not a bug — re-run backend/tools/LinkedInLogin and re-upload the session " +
-                           "to confirm the account is fine and clear it early.";
-                }
+                return $"Your LinkedIn automation is paused until {until:u} after {reason} " +
+                       $"(about {remainingHours:F1}h left). This protects your account — re-run " +
+                       "backend/tools/LinkedInLogin and re-upload your session to confirm it's fine and clear this early.";
             }
         }
 
@@ -135,55 +120,69 @@ public sealed class LinkedInSessionManager(
     }
 
     /// <summary>
-    /// A browser context pre-loaded with the saved LinkedIn session. Throws if
-    /// no session file exists — callers should check <see cref="Readiness"/>
+    /// A browser context pre-loaded with this user's saved LinkedIn session.
+    /// Throws if none exists — callers should check <see cref="ReadinessAsync"/>
     /// first for a cheaper pre-flight, same pattern every other provider uses.
     /// <para>
-    /// Waits on the process-wide LinkedIn gate before ever touching the
-    /// browser — see the class remarks. The returned lease releases it on
-    /// disposal, alongside the underlying context/concurrency-slot release
+    /// Waits on this user's own gate before ever touching the browser — see
+    /// the class remarks. The returned lease releases it on disposal,
+    /// alongside the underlying context/concurrency-slot release
     /// <see cref="BrowserContextLease"/> already does.
     /// </para>
     /// </summary>
-    public async Task<LinkedInContextLease> AcquireContextAsync(CancellationToken ct)
+    public async Task<LinkedInContextLease> AcquireContextAsync(Guid userId, CancellationToken ct)
     {
-        var notReady = Readiness();
+        var notReady = await ReadinessAsync(userId, ct);
         if (notReady is not null) throw new ProviderException(notReady, ProviderFailure.MissingApiKey);
 
-        await _linkedInGate.WaitAsync(ct);
+        var gate = GetGate(userId);
+        await gate.WaitAsync(ct);
 
         try
         {
-            var statePath = Path.GetFullPath(optionsMonitor.CurrentValue.LinkedInStorageStatePath);
+            await using var scope = scopeFactory.CreateAsyncScope();
+            var db = scope.ServiceProvider.GetRequiredService<LeadMineDbContext>();
+
+            var storageStateJson = await db.LinkedInAccountSessions
+                .Where(s => s.UserId == userId)
+                .Select(s => s.StorageStateJson)
+                .FirstOrDefaultAsync(ct);
+
+            if (string.IsNullOrWhiteSpace(storageStateJson))
+            {
+                throw new ProviderException(
+                    "No LinkedIn session found for your account. Upload one from Settings.",
+                    ProviderFailure.MissingApiKey);
+            }
 
             var inner = await browser.AcquireContextAsync(
                 new BrowserNewContextOptions
                 {
-                    StorageStatePath = statePath,
+                    // Handed the session content directly — never written to a
+                    // shared file the way the single, app-wide session was.
+                    StorageState = storageStateJson,
                     Locale = "en-US",
                     ViewportSize = new ViewportSize { Width = 1366, Height = 900 },
                 },
                 ct);
 
-            return new LinkedInContextLease(inner, _linkedInGate);
+            return new LinkedInContextLease(inner, gate);
         }
         catch
         {
-            _linkedInGate.Release();
+            gate.Release();
             throw;
         }
     }
 
     /// <summary>
-    /// Confirms the saved session still works by visiting the feed and
+    /// Confirms this user's saved session still works by visiting the feed and
     /// checking LinkedIn didn't bounce it to a login/checkpoint page, or show a
-    /// restriction warning in place. Costs a real page load, so callers use it
-    /// to fail fast on a dead session rather than calling it before every
-    /// single search.
+    /// restriction warning in place.
     /// </summary>
-    public async Task<bool> IsSessionValidAsync(CancellationToken ct)
+    public async Task<bool> IsSessionValidAsync(Guid userId, CancellationToken ct)
     {
-        await using var lease = await AcquireContextAsync(ct);
+        await using var lease = await AcquireContextAsync(userId, ct);
         var page = await lease.Context.NewPageAsync();
 
         try
@@ -198,7 +197,7 @@ public sealed class LinkedInSessionManager(
 
             if (await IsRestrictedContentAsync(page))
             {
-                ReportRestriction("a restriction warning on the LinkedIn feed");
+                await ReportRestrictionAsync(userId, "a restriction warning on the LinkedIn feed", ct);
                 return false;
             }
 
@@ -219,8 +218,8 @@ public sealed class LinkedInSessionManager(
     /// True when LinkedIn is showing a restriction/verification warning on the
     /// current page — distinct from <see cref="IsLoggedOutUrl"/>, which only
     /// catches a redirect. LinkedIn often renders these as a banner on an
-    /// otherwise ordinary-looking URL (a search results page, a company page)
-    /// rather than redirecting, so a URL check alone misses them.
+    /// otherwise ordinary-looking URL rather than redirecting, so a URL check
+    /// alone misses them.
     /// </summary>
     public static async Task<bool> IsRestrictedContentAsync(IPage page)
     {
@@ -239,138 +238,163 @@ public sealed class LinkedInSessionManager(
     }
 
     /// <summary>
-    /// Trips the circuit breaker: every LinkedIn call anywhere in the app —
-    /// any job, any user — refuses to run (see <see cref="Readiness"/>) until
+    /// Trips this user's circuit breaker: their LinkedIn calls refuse to run
+    /// (see <see cref="ReadinessAsync"/>) until
     /// <see cref="ScraperOptions.LinkedInRestrictionCooldownHours"/> has
     /// passed. Call the instant any LinkedIn-backed service sees
-    /// <see cref="IsRestrictedContentAsync"/> return true.
+    /// <see cref="IsRestrictedContentAsync"/> return true for this user.
     /// </summary>
-    public void ReportRestriction(string reason)
+    public async Task ReportRestrictionAsync(Guid userId, string reason, CancellationToken ct)
     {
-        lock (_stateLock)
-        {
-            var state = LoadStateNoLock();
+        await using var scope = scopeFactory.CreateAsyncScope();
+        var db = scope.ServiceProvider.GetRequiredService<LeadMineDbContext>();
 
-            // A second warning while already paused extends the pause from
-            // now rather than shortening it back to a fresh window from this
-            // later moment — whatever tripped it plainly has not resolved.
-            var alreadyPaused = state.RestrictedAt is { } existing &&
-                existing + TimeSpan.FromHours(optionsMonitor.CurrentValue.LinkedInRestrictionCooldownHours) > DateTimeOffset.UtcNow;
+        var session = await db.LinkedInAccountSessions.FirstOrDefaultAsync(s => s.UserId == userId, ct);
+        if (session is null) return;
 
-            if (!alreadyPaused) state.RestrictedAt = DateTimeOffset.UtcNow;
+        var cooldown = TimeSpan.FromHours(optionsMonitor.CurrentValue.LinkedInRestrictionCooldownHours);
 
-            state.RestrictedReason = reason;
-            SaveStateNoLock(state);
-        }
+        // A second warning while already paused extends the pause from now
+        // rather than shortening it back to a fresh window from this later
+        // moment — whatever tripped it plainly has not resolved.
+        var alreadyPaused = session.RestrictedAt is { } existing && existing + cooldown > DateTimeOffset.UtcNow;
+
+        if (!alreadyPaused) session.RestrictedAt = DateTimeOffset.UtcNow;
+        session.RestrictedReason = reason;
+
+        await db.SaveChangesAsync(ct);
 
         logger.LogError(
-            "LinkedIn restriction detected ({Reason}); pausing all LinkedIn automation for {Hours}h.",
-            reason, optionsMonitor.CurrentValue.LinkedInRestrictionCooldownHours);
+            "LinkedIn restriction detected for user {UserId} ({Reason}); pausing their LinkedIn automation for {Hours}h.",
+            userId, reason, optionsMonitor.CurrentValue.LinkedInRestrictionCooldownHours);
     }
 
     /// <summary>
-    /// Self-imposed daily cap on LinkedIn searches, so this app finds LinkedIn's
-    /// own "commercial use limit" by staying under a conservative number rather
-    /// than by tripping it on the dedicated account. Persisted (see the class
-    /// remarks), so a restart does not quietly hand back a full day's budget.
+    /// Self-imposed daily cap on LinkedIn searches for this user's account, so
+    /// this app finds LinkedIn's own "commercial use limit" by staying under a
+    /// conservative number rather than by tripping it. Persisted on the
+    /// user's row, so a restart does not quietly hand back a full day's budget.
     /// </summary>
-    public void EnsureSearchBudget()
+    public async Task EnsureSearchBudgetAsync(Guid userId, CancellationToken ct)
     {
         var limit = optionsMonitor.CurrentValue.LinkedInMaxSearchesPerDay;
 
-        lock (_stateLock)
+        await using var scope = scopeFactory.CreateAsyncScope();
+        var db = scope.ServiceProvider.GetRequiredService<LeadMineDbContext>();
+
+        var session = await db.LinkedInAccountSessions.FirstOrDefaultAsync(s => s.UserId == userId, ct);
+
+        if (session is null)
         {
-            var state = LoadStateNoLock();
-
-            if (state.SearchesToday >= limit)
-            {
-                logger.LogWarning(
-                    "LinkedIn daily search cap ({Limit}) reached; refusing further LinkedIn calls until UTC midnight", limit);
-
-                throw new ProviderException(
-                    $"LinkedIn daily search cap ({limit}) reached for this process. Resets at UTC midnight. " +
-                    "Raise Scraper:LinkedInMaxSearchesPerDay if needed, but LinkedIn's own throttling is the real ceiling.",
-                    ProviderFailure.QuotaExceeded);
-            }
-
-            state.SearchesToday++;
-            SaveStateNoLock(state);
-        }
-    }
-
-    private LinkedInUsageState LoadState()
-    {
-        lock (_stateLock)
-        {
-            return LoadStateNoLock();
-        }
-    }
-
-    /// <summary>Caller must already hold <see cref="_stateLock"/>.</summary>
-    private LinkedInUsageState LoadStateNoLock()
-    {
-        var path = Path.GetFullPath(optionsMonitor.CurrentValue.LinkedInUsageStatePath);
-
-        LinkedInUsageState state;
-
-        try
-        {
-            state = File.Exists(path)
-                ? JsonSerializer.Deserialize<LinkedInUsageState>(File.ReadAllText(path), JsonOptions) ?? new LinkedInUsageState()
-                : new LinkedInUsageState();
-        }
-        catch (Exception ex)
-        {
-            // A corrupt file costs today's search count, not the app — starting
-            // fresh is safe here since the day resets it anyway.
-            logger.LogDebug(ex, "Could not read LinkedIn usage state at {Path}; starting fresh", path);
-            state = new LinkedInUsageState();
+            throw new ProviderException(
+                "No LinkedIn session found for your account. Upload one from Settings.",
+                ProviderFailure.MissingApiKey);
         }
 
         var today = DateOnly.FromDateTime(DateTime.UtcNow);
-        if (state.Date != today)
+        if (session.BudgetDate != today)
         {
-            state.Date = today;
-            state.SearchesToday = 0;
+            session.BudgetDate = today;
+            session.SearchesToday = 0;
         }
 
-        return state;
+        if (session.SearchesToday >= limit)
+        {
+            logger.LogWarning(
+                "LinkedIn daily search cap ({Limit}) reached for user {UserId}; refusing further LinkedIn calls until UTC midnight",
+                limit, userId);
+
+            throw new ProviderException(
+                $"Your LinkedIn daily search cap ({limit}) has been reached. Resets at UTC midnight. " +
+                "Raise Scraper:LinkedInMaxSearchesPerDay if needed, but LinkedIn's own throttling is the real ceiling.",
+                ProviderFailure.QuotaExceeded);
+        }
+
+        session.SearchesToday++;
+        await db.SaveChangesAsync(ct);
     }
 
-    /// <summary>Caller must already hold <see cref="_stateLock"/>.</summary>
-    private void SaveStateNoLock(LinkedInUsageState state)
+    /// <summary>
+    /// Stores or replaces this user's LinkedIn session — the upload side of
+    /// the self-service flow (see <c>LinkedInController</c>). A fresh upload
+    /// is a real human confirming the account is fine, so it clears any
+    /// active restriction rather than making them wait out a cooldown they
+    /// have already personally verified past.
+    /// </summary>
+    public async Task UploadSessionAsync(Guid userId, string storageStateJson, CancellationToken ct)
     {
-        try
+        await using var scope = scopeFactory.CreateAsyncScope();
+        var db = scope.ServiceProvider.GetRequiredService<LeadMineDbContext>();
+
+        var existing = await db.LinkedInAccountSessions.FirstOrDefaultAsync(s => s.UserId == userId, ct);
+
+        if (existing is null)
         {
-            var path = Path.GetFullPath(optionsMonitor.CurrentValue.LinkedInUsageStatePath);
-            Directory.CreateDirectory(Path.GetDirectoryName(path)!);
-            File.WriteAllText(path, JsonSerializer.Serialize(state, JsonOptions));
+            db.LinkedInAccountSessions.Add(new LinkedInAccountSession
+            {
+                UserId = userId,
+                StorageStateJson = storageStateJson,
+                UploadedAt = DateTimeOffset.UtcNow,
+                BudgetDate = DateOnly.FromDateTime(DateTime.UtcNow),
+            });
         }
-        catch (Exception ex)
+        else
         {
-            // Best-effort: losing this write costs accuracy of the daily cap
-            // and cooldown across the next restart, not correctness right now.
-            logger.LogWarning(ex, "Could not persist LinkedIn usage state; it may not survive the next restart.");
+            existing.StorageStateJson = storageStateJson;
+            existing.UploadedAt = DateTimeOffset.UtcNow;
+            existing.RestrictedAt = null;
+            existing.RestrictedReason = null;
         }
+
+        await db.SaveChangesAsync(ct);
     }
 
-    private sealed class LinkedInUsageState
+    /// <summary>Status for the Settings page — never the session content itself.</summary>
+    public async Task<LinkedInSessionStatus?> GetStatusAsync(Guid userId, CancellationToken ct)
     {
-        public DateOnly Date { get; set; } = DateOnly.FromDateTime(DateTime.UtcNow);
-        public int SearchesToday { get; set; }
-        public DateTimeOffset? RestrictedAt { get; set; }
-        public string? RestrictedReason { get; set; }
+        await using var scope = scopeFactory.CreateAsyncScope();
+        var db = scope.ServiceProvider.GetRequiredService<LeadMineDbContext>();
+
+        var session = await db.LinkedInAccountSessions.AsNoTracking()
+            .FirstOrDefaultAsync(s => s.UserId == userId, ct);
+
+        if (session is null) return null;
+
+        DateTimeOffset? restrictedUntil = null;
+
+        if (session.RestrictedAt is { } at)
+        {
+            var until = at + TimeSpan.FromHours(optionsMonitor.CurrentValue.LinkedInRestrictionCooldownHours);
+            if (until > DateTimeOffset.UtcNow) restrictedUntil = until;
+        }
+
+        return new LinkedInSessionStatus(session.UploadedAt, session.SearchesToday, restrictedUntil, session.RestrictedReason);
+    }
+
+    public async Task RemoveSessionAsync(Guid userId, CancellationToken ct)
+    {
+        await using var scope = scopeFactory.CreateAsyncScope();
+        var db = scope.ServiceProvider.GetRequiredService<LeadMineDbContext>();
+
+        await db.LinkedInAccountSessions.Where(s => s.UserId == userId).ExecuteDeleteAsync(ct);
     }
 }
 
+/// <summary>Status shown on the Settings page. Deliberately excludes the session content itself.</summary>
+public sealed record LinkedInSessionStatus(
+    DateTimeOffset UploadedAt,
+    int SearchesToday,
+    DateTimeOffset? RestrictedUntil,
+    string? RestrictedReason);
+
 /// <summary>
-/// A LinkedIn browser context. Releasing it releases both the process-wide
-/// LinkedIn gate (see <see cref="LinkedInSessionManager"/>'s remarks) and the
-/// underlying context/concurrency-slot release <see cref="BrowserContextLease"/>
-/// already does — in that order, so the slot frees only once LinkedIn traffic
-/// has actually stopped.
+/// A LinkedIn browser context. Releasing it releases both this user's gate
+/// (see <see cref="LinkedInSessionManager"/>'s remarks) and the underlying
+/// context/concurrency-slot release <see cref="BrowserContextLease"/> already
+/// does — in that order, so the slot frees only once this user's LinkedIn
+/// traffic has actually stopped.
 /// </summary>
-public sealed class LinkedInContextLease(BrowserContextLease inner, SemaphoreSlim linkedInGate) : IAsyncDisposable
+public sealed class LinkedInContextLease(BrowserContextLease inner, SemaphoreSlim userGate) : IAsyncDisposable
 {
     public IBrowserContext Context => inner.Context;
 
@@ -382,7 +406,7 @@ public sealed class LinkedInContextLease(BrowserContextLease inner, SemaphoreSli
         }
         finally
         {
-            linkedInGate.Release();
+            userGate.Release();
         }
     }
 }
