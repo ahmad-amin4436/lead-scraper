@@ -6,6 +6,7 @@ import { zodResolver } from '@hookform/resolvers/zod';
 import { Save, ShieldCheck, TriangleAlert } from 'lucide-react';
 import { toast } from 'sonner';
 
+import { LinkedInAccountCard } from '@/components/linkedin/linkedin-account-card';
 import { PageHeader } from '@/components/shared/page-header';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
@@ -120,6 +121,10 @@ export function SettingsView() {
           <AlertDescription>{query.error.message}</AlertDescription>
         </Alert>
       )}
+
+      <div className="mb-6">
+        <LinkedInAccountCard />
+      </div>
 
       {query.isPending || !query.data ? (
         <div className="space-y-6">

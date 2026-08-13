@@ -335,9 +335,9 @@ public sealed class PlaywrightLinkedInPeopleService(
             throw new ProviderException(
                 "LinkedIn returned no people at all for this search. LinkedIn only surfaces people within the " +
                 "signed-in account's own network, so an account with no connections gets an empty result for " +
-                "every search — even for companies whose staff are visible to a normal account. Check that the " +
-                "account saved in linkedin-session.json has real connections (open linkedin.com/mynetwork/ as " +
-                "that account), then re-run backend/tools/LinkedInLogin and re-upload the session.",
+                "every search — even for companies whose staff are visible to a normal account. Check that your " +
+                "connected LinkedIn account has real connections (open linkedin.com/mynetwork/ as that account) " +
+                "— reconnecting it from Settings won't help unless the account itself has a network.",
                 ProviderFailure.MissingApiKey);
         }
     }

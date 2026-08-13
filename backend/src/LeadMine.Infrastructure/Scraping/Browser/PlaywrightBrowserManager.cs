@@ -149,7 +149,10 @@ public sealed class PlaywrightBrowserManager(
             _browser = await _playwright.Chromium.LaunchAsync(new BrowserTypeLaunchOptions
             {
                 Headless = true,
-                Args = ["--disable-gpu", "--disable-dev-shm-usage", "--no-sandbox"],
+                // The last flag quiets one of the more common automation signals
+                // sites (LinkedIn's login page especially) check for — see
+                // LinkedInSessionManager.BeginCredentialLoginAsync's remarks.
+                Args = ["--disable-gpu", "--disable-dev-shm-usage", "--no-sandbox", "--disable-blink-features=AutomationControlled"],
             });
 
             logger.LogInformation("Chromium launched successfully.");

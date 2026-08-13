@@ -1,8 +1,10 @@
 namespace LeadMine.Domain.Entities;
 
 /// <summary>
-/// One app user's own LinkedIn session — cookies and local storage from a
-/// real, manual login (<c>backend/tools/LinkedInLogin</c>), never a password.
+/// One app user's own LinkedIn session — cookies and local storage captured
+/// from a real login the API itself performs server-side with that user's
+/// own credentials (see <c>LinkedInSessionManager.BeginCredentialLoginAsync</c>),
+/// never the password itself.
 /// <para>
 /// Each user brings their own LinkedIn account for LinkedIn-backed features,
 /// rather than every user in the app sharing one dedicated automation
@@ -30,8 +32,8 @@ public class LinkedInAccountSession
     public Guid UserId { get; set; }
 
     /// <summary>
-    /// Raw Playwright storage state (cookies + local storage) as produced by
-    /// <c>backend/tools/LinkedInLogin</c>. Handed to Playwright's
+    /// Raw Playwright storage state (cookies + local storage) captured right
+    /// after a successful server-side login. Handed to Playwright's
     /// <c>BrowserNewContextOptions.StorageState</c> directly — never written
     /// to a shared file, and never a credential of any kind.
     /// </summary>

@@ -27,14 +27,13 @@ namespace LeadMine.Api.Controllers;
 /// </para>
 /// <para>
 /// Also owns the self-service LinkedIn session endpoints at the bottom of this
-/// file: each user connects their own account by running
-/// <c>backend/tools/LinkedInLogin</c> on their own machine, logged into their
-/// own LinkedIn account, rather than the app sharing one dedicated account —
-/// see <see cref="LinkedInSessionManager"/>'s remarks for why. The tool pushes
-/// the captured session straight to the caller's account using a short-lived
-/// connect code (<c>session/connect-token</c> + <c>session/by-token</c>);
-/// <c>session</c> itself remains available for a manual file upload/status
-/// check/removal.
+/// file: each user connects their own account by submitting their own
+/// LinkedIn email/password to <c>session/login</c>, which this API uses to
+/// drive a real, server-side Playwright browser through LinkedIn's own login
+/// page — rather than the app sharing one dedicated account — see
+/// <see cref="LinkedInSessionManager"/>'s remarks for why. A checkpoint
+/// (verification code) mid-login round-trips through <c>session/login/verify</c>;
+/// <c>session</c> itself remains available for a status check/removal.
 /// </para>
 /// </summary>
 [Authorize]
@@ -153,42 +152,52 @@ public sealed class LinkedInController(
     // Permissions.LinkedIn.RunEnrichment / RunPeopleSearch, same as before.
 
     /// <summary>
-    /// Uploads or replaces the caller's own LinkedIn session: the
-    /// storageState.json produced by running backend/tools/LinkedInLogin on
-    /// their own machine, logged into their own LinkedIn account. Never a
-    /// password — only the already-authenticated session, the same thing that
-    /// tool always produced. A fresh upload also clears any active restriction
-    /// cooldown on their account (see LinkedInSessionManager's remarks): a
-    /// real, manual login is a real confirmation the account is fine.
+    /// Starts a fresh LinkedIn login for the caller's own account: the API
+    /// itself drives a server-side Playwright browser through LinkedIn's login
+    /// page with the submitted email/password. Never persisted — used only to
+    /// fill that one form, then discarded. On an outright accept, the captured
+    /// session is saved immediately (also clearing any active restriction
+    /// cooldown — a real, successful login is a real confirmation the account
+    /// is fine). On a checkpoint, the response asks the caller to follow up
+    /// with <see cref="SubmitLoginVerification"/>.
     /// </summary>
-    [HttpPost("session")]
-    [ProducesResponseType(StatusCodes.Status204NoContent)]
-    [ProducesResponseType(StatusCodes.Status400BadRequest)]
-    public async Task<IActionResult> UploadSession(IFormFile file, CancellationToken ct)
+    [HttpPost("session/login")]
+    [ProducesResponseType(typeof(LinkedInLoginResult), StatusCodes.Status200OK)]
+    public async Task<ActionResult<LinkedInLoginResult>> Login(LinkedInLoginRequest request, CancellationToken ct)
     {
         if (currentUser.UserId is not { } userId) return Unauthorized();
 
-        if (file.Length == 0 || file.Length > 1_000_000)
-        {
-            return BadRequest("storageState.json should be a small file, well under 1MB — this doesn't look right.");
-        }
+        var result = await linkedInSession.BeginCredentialLoginAsync(userId, request.LinkedInEmail, request.LinkedInPassword, ct);
+        return Ok(result);
+    }
 
-        using var reader = new StreamReader(file.OpenReadStream());
-        var content = await reader.ReadToEndAsync(ct);
+    /// <summary>
+    /// Submits a verification code into the checkpoint a prior
+    /// <see cref="Login"/> call left pending for the caller. May itself come
+    /// back asking for another code — LinkedIn sometimes chains checkpoints.
+    /// </summary>
+    [HttpPost("session/login/verify")]
+    [ProducesResponseType(typeof(LinkedInLoginResult), StatusCodes.Status200OK)]
+    public async Task<ActionResult<LinkedInLoginResult>> SubmitLoginVerification(LinkedInLoginVerifyRequest request, CancellationToken ct)
+    {
+        if (currentUser.UserId is not { } userId) return Unauthorized();
 
-        // A cheap sanity check, not schema validation: catches an obviously
-        // wrong upload (a screenshot, a random document) without pretending to
-        // verify it is actually a valid Playwright storage state.
-        try
-        {
-            using var _ = JsonDocument.Parse(content);
-        }
-        catch (JsonException)
-        {
-            return BadRequest("That doesn't look like a valid storageState.json file.");
-        }
+        var result = await linkedInSession.SubmitLoginVerificationAsync(userId, request.Code, ct);
+        return Ok(result);
+    }
 
-        await linkedInSession.UploadSessionAsync(userId, content, ct);
+    /// <summary>
+    /// Abandons the caller's own pending login (e.g. they closed the "connect
+    /// LinkedIn" dialog mid-checkpoint) so its browser context and gate are
+    /// released immediately rather than sitting open until it expires.
+    /// </summary>
+    [HttpPost("session/login/cancel")]
+    [ProducesResponseType(StatusCodes.Status204NoContent)]
+    public async Task<IActionResult> CancelLogin(CancellationToken ct)
+    {
+        if (currentUser.UserId is not { } userId) return Unauthorized();
+
+        await linkedInSession.CancelLoginAsync(userId, ct);
         return NoContent();
     }
 
@@ -214,65 +223,4 @@ public sealed class LinkedInController(
         await linkedInSession.RemoveSessionAsync(userId, ct);
         return NoContent();
     }
-
-    /// <summary>
-    /// Mints a short-lived code the "Connect your LinkedIn account" dialog
-    /// hands to <c>backend/tools/LinkedInLogin</c> so the tool can push the
-    /// captured session straight to the caller's account — see
-    /// <see cref="LinkedInSessionManager.CreateConnectToken"/>.
-    /// </summary>
-    [HttpPost("session/connect-token")]
-    [ProducesResponseType(typeof(CreateLinkedInConnectTokenResponse), StatusCodes.Status200OK)]
-    public ActionResult<CreateLinkedInConnectTokenResponse> CreateConnectToken()
-    {
-        if (currentUser.UserId is not { } userId) return Unauthorized();
-
-        var (token, expiresAt) = linkedInSession.CreateConnectToken(userId);
-        return Ok(new CreateLinkedInConnectTokenResponse(token, expiresAt));
-    }
-
-    /// <summary>
-    /// Called by <c>backend/tools/LinkedInLogin</c> itself, not the browser —
-    /// it has no bearer token to authenticate with, so the connect code from
-    /// <see cref="CreateConnectToken"/> stands in for one. Anonymous by
-    /// necessity, but the code is a single-use, 15-minute, 256-bit random
-    /// value, so this is not meaningfully more exposed than the code itself.
-    /// </summary>
-    [HttpPost("session/by-token")]
-    [AllowAnonymous]
-    [ProducesResponseType(StatusCodes.Status204NoContent)]
-    [ProducesResponseType(StatusCodes.Status400BadRequest)]
-    public async Task<IActionResult> RedeemConnectToken(RedeemLinkedInConnectTokenRequest request, CancellationToken ct)
-    {
-        if (string.IsNullOrWhiteSpace(request.Token) || string.IsNullOrWhiteSpace(request.StorageStateJson))
-        {
-            return BadRequest("Token and session content are required.");
-        }
-
-        if (request.StorageStateJson.Length > 1_000_000)
-        {
-            return BadRequest("That session looks too large to be valid.");
-        }
-
-        try
-        {
-            using var _ = JsonDocument.Parse(request.StorageStateJson);
-        }
-        catch (JsonException)
-        {
-            return BadRequest("That doesn't look like a valid storageState.json file.");
-        }
-
-        var redeemed = await linkedInSession.RedeemConnectTokenAsync(request.Token, request.StorageStateJson, ct);
-        if (!redeemed)
-        {
-            return BadRequest("That connect code is invalid or has expired. Generate a new one from the app and try again.");
-        }
-
-        return NoContent();
-    }
 }
-
-public sealed record CreateLinkedInConnectTokenResponse(string Token, DateTimeOffset ExpiresAt);
-
-public sealed record RedeemLinkedInConnectTokenRequest(string Token, string StorageStateJson);

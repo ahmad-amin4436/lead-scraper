@@ -4,7 +4,19 @@
       "WebSearch",
       "Bash(git log *)",
       "Bash(git ls-tree *)",
-      "Bash(npm install *)"
+      "Bash(npm install *)",
+      "Bash(dotnet build *)",
+      "Bash(npx tsc *)",
+      "Bash(rm -rf .next)",
+      "Bash(npx next *)",
+      "Bash(npx eslint *)",
+      "Bash(timeout 20 dotnet run --no-build)",
+      "Bash(python3 -c ' *)",
+      "Bash(node -e ' *)",
+      "Bash(sqlcmd -S \".\\\\SQLEXPRESS\" -d LeadMineDb -E -Q \"SELECT TOP 5 UserId, UploadedAt, SearchesToday, RestrictedAt, RestrictedReason, LEN\\(StorageStateJson\\) AS StateLen FROM LinkedInAccountSessions ORDER BY UploadedAt DESC\" -C)",
+      "Bash(node -e \"const icons = require\\('lucide-react'\\); console.log\\(typeof icons.Linkedin, typeof icons.ShieldAlert, typeof icons.AlertTriangle\\);\")",
+      "Bash(node -e \"const icons = require\\('lucide-react'\\); ['Link2','UserCheck','BadgeCheck','CircleUserRound','KeyRound'].forEach\\(n => console.log\\(n, typeof icons[n]\\)\\);\")",
+      "Bash(sort -k6,7)"
     ]
   }
 }

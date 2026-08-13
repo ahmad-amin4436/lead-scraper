@@ -59,14 +59,20 @@ export interface LinkedInSessionStatus {
   restrictedReason: string | null;
 }
 
+/** Outcome of a credential login attempt or verification-code submission. */
+export type LinkedInLoginStatus =
+  | 'success'
+  | 'verificationRequired'
+  | 'invalidCredentials'
+  | 'challengeUnsupported'
+  | 'restricted'
+  | 'failed';
+
 /**
- * A short-lived code `backend/tools/LinkedInLogin` redeems to push a captured
- * session straight to the caller's account. `apiBaseUrl` is the .NET API's
- * own public URL — the tool runs on the user's machine and calls it directly,
- * never through this app's Next.js proxy.
+ * Response from `session/login` and `session/login/verify` — `message` is
+ * user-facing, either LinkedIn's own text or a plain-language fallback.
  */
-export interface LinkedInConnectToken {
-  token: string;
-  expiresAt: string;
-  apiBaseUrl: string;
+export interface LinkedInLoginResult {
+  status: LinkedInLoginStatus;
+  message: string;
 }

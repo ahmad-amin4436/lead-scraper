@@ -18,3 +18,16 @@ export const startPeopleSearchSchema = z.object({
 });
 
 export type StartPeopleSearchInput = z.infer<typeof startPeopleSearchSchema>;
+
+export const linkedInLoginSchema = z.object({
+  linkedInEmail: z.string().trim().min(1, { error: 'Enter your LinkedIn email' }).max(256),
+  linkedInPassword: z.string().min(1, { error: 'Enter your LinkedIn password' }).max(256),
+});
+
+export type LinkedInLoginInput = z.infer<typeof linkedInLoginSchema>;
+
+export const linkedInLoginVerifySchema = z.object({
+  code: z.string().trim().min(1, { error: 'Enter the verification code' }).max(32),
+});
+
+export type LinkedInLoginVerifyInput = z.infer<typeof linkedInLoginVerifySchema>;

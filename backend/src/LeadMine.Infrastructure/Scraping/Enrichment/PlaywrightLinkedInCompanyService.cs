@@ -280,7 +280,7 @@ public sealed partial class PlaywrightLinkedInCompanyService(
         if (LinkedInSessionManager.IsLoggedOutUrl(page.Url))
         {
             throw new ProviderException(
-                "Your LinkedIn session expired — re-run backend/tools/LinkedInLogin and upload a fresh storageState.json from Settings.",
+                "Your LinkedIn session expired — reconnect your LinkedIn account from Settings.",
                 ProviderFailure.MissingApiKey);
         }
 

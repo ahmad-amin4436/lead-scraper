@@ -4,8 +4,8 @@ import { ok } from '@/lib/api/response';
 export const dynamic = 'force-dynamic';
 
 /**
- * The caller's own LinkedIn session — one per app user, uploaded from
- * `backend/tools/LinkedInLogin` run on their own machine. See
+ * The caller's own LinkedIn session — one per app user, created by signing
+ * in with their own LinkedIn credentials (see `session/login`). See
  * `LinkedInSessionManager`'s remarks for why each user brings their own
  * LinkedIn account rather than the app sharing one dedicated one.
  */
@@ -17,18 +17,6 @@ export async function GET(): Promise<Response> {
   // No session yet is an expected, common state here — not a fetch failure —
   // so the caller gets `null` back rather than an error to show the user.
   if (response.status === 404) return ok(null);
-
-  return backendToApiResult(response);
-}
-
-/** Uploads or replaces the caller's own session file. */
-export async function POST(request: Request): Promise<Response> {
-  const formData = await request.formData();
-
-  const { response } = await backendRequest('/api/linkedin/session', {
-    method: 'POST',
-    body: formData,
-  });
 
   return backendToApiResult(response);
 }

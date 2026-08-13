@@ -3,18 +3,13 @@
 import { useMutation, useQuery, useQueryClient, type UseMutationResult, type UseQueryResult } from '@tanstack/react-query';
 
 import { apiFetch } from '@/lib/api-client';
-import type { LinkedInConnectToken, LinkedInSessionStatus } from '@/types/linkedin-job';
+import type { LinkedInLoginResult, LinkedInSessionStatus } from '@/types/linkedin-job';
 
 const queryKey = ['linkedin-session'] as const;
 
 /**
  * The caller's own LinkedIn session status. `data` is `null` when nothing has
- * been uploaded yet — a normal state for a new user, not an error.
- *
- * Pass `poll: true` while a connect dialog is open and waiting on
- * `backend/tools/LinkedInLogin` to push a session in — the query then
- * refetches every few seconds so the dialog notices and closes itself the
- * moment it lands, with no action required from the caller.
+ * been connected yet — a normal state for a new user, not an error.
  */
 export function useLinkedInSessionStatus(poll = false): UseQueryResult<LinkedInSessionStatus | null> {
   return useQuery({
@@ -25,34 +20,46 @@ export function useLinkedInSessionStatus(poll = false): UseQueryResult<LinkedInS
 }
 
 /**
- * Mints a connect code and hands back the exact command to run
- * `backend/tools/LinkedInLogin` with — the tool pushes the captured session
- * straight to the caller's account, so there is no file to download or
- * upload.
+ * Starts a fresh LinkedIn login with the caller's own email/password — the
+ * API itself drives a server-side Playwright browser through LinkedIn's login
+ * page. A `success` result means the session landed; invalidate the status
+ * query so the rest of the app notices immediately. A `verificationRequired`
+ * result means LinkedIn raised a checkpoint — follow up with
+ * {@link useLinkedInLoginVerify}.
  */
-export function useCreateLinkedInConnectToken(): UseMutationResult<LinkedInConnectToken, Error, void> {
-  return useMutation({
-    mutationFn: () => apiFetch<LinkedInConnectToken>('/api/linkedin/connect-token', { method: 'POST' }),
-  });
-}
-
-/**
- * Uploads (or replaces) the caller's own storageState.json — the file
- * produced by running `backend/tools/LinkedInLogin` on their own machine,
- * logged into their own LinkedIn account.
- */
-export function useUploadLinkedInSession(): UseMutationResult<void, Error, File> {
+export function useLinkedInLogin(): UseMutationResult<LinkedInLoginResult, Error, { linkedInEmail: string; linkedInPassword: string }> {
   const client = useQueryClient();
 
   return useMutation({
-    mutationFn: async (file) => {
-      const formData = new FormData();
-      formData.append('file', file);
-      await apiFetch<void>('/api/linkedin/session', { method: 'POST', body: formData });
+    mutationFn: (body) => apiFetch<LinkedInLoginResult>('/api/linkedin/session/login', {
+      method: 'POST',
+      body: JSON.stringify(body),
+    }),
+    onSuccess: (result) => {
+      if (result.status === 'success') void client.invalidateQueries({ queryKey });
     },
-    onSuccess: () => {
-      void client.invalidateQueries({ queryKey });
+  });
+}
+
+/** Submits a verification code into a checkpoint {@link useLinkedInLogin} left pending. */
+export function useLinkedInLoginVerify(): UseMutationResult<LinkedInLoginResult, Error, { code: string }> {
+  const client = useQueryClient();
+
+  return useMutation({
+    mutationFn: (body) => apiFetch<LinkedInLoginResult>('/api/linkedin/session/login/verify', {
+      method: 'POST',
+      body: JSON.stringify(body),
+    }),
+    onSuccess: (result) => {
+      if (result.status === 'success') void client.invalidateQueries({ queryKey });
     },
+  });
+}
+
+/** Abandons the caller's own pending login — call when the connect dialog closes mid-checkpoint. */
+export function useCancelLinkedInLogin(): UseMutationResult<void, Error, void> {
+  return useMutation({
+    mutationFn: () => apiFetch<void>('/api/linkedin/session/login/cancel', { method: 'POST' }),
   });
 }
 

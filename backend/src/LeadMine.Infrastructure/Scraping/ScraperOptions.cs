@@ -172,8 +172,8 @@ public sealed class ScraperOptions
     /// LinkedIn is flagging their account's traffic. Scoped to that one user;
     /// it says nothing about anyone else's account. Long enough that whatever
     /// tripped it has had time to settle; the user can still end it early by
-    /// re-running <c>backend/tools/LinkedInLogin</c> and re-uploading, which
-    /// counts as a fresh confirmation the account is fine.
+    /// reconnecting their LinkedIn account from Settings, which counts as a
+    /// fresh confirmation the account is fine.
     /// </summary>
     [Range(1, 168)]
     public int LinkedInRestrictionCooldownHours { get; set; } = 24;
