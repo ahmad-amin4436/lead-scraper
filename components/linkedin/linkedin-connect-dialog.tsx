@@ -1,7 +1,7 @@
 'use client';
 
 import * as React from 'react';
-import { AlertTriangle, ExternalLink, ShieldAlert, UploadCloud } from 'lucide-react';
+import { AlertTriangle, Check, Copy, Loader2, ShieldAlert } from 'lucide-react';
 import { toast } from 'sonner';
 
 import { Button } from '@/components/ui/button';
@@ -13,54 +13,78 @@ import {
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog';
-import { Input } from '@/components/ui/input';
 import { Alert, AlertDescription } from '@/components/ui/misc';
 import {
   isLinkedInSessionRestricted,
+  useCreateLinkedInConnectToken,
   useLinkedInSessionStatus,
-  useUploadLinkedInSession,
 } from '@/hooks/use-linkedin-session';
 
-const LOGIN_TOOL_PATH = 'backend/tools/LinkedInLogin';
+function buildCommand(token: string, apiBaseUrl: string): string {
+  return `dotnet run --project backend/tools/LinkedInLogin -- --connect ${token} --api ${apiBaseUrl}`;
+}
 
 /**
  * Gates LinkedIn Enrichment / People Search behind a per-user session: each
  * user logs into their own LinkedIn account locally — never through this
- * app's servers — and uploads the resulting session file once. Renders
- * nothing once a working session is on file.
+ * app's servers — and `backend/tools/LinkedInLogin` pushes the captured
+ * session straight to their account using a short-lived connect code. There
+ * is no file to find or upload; this dialog only displays the one command to
+ * run, then polls and closes itself once it lands.
  *
- * Auto-opens the connect dialog the first time a page that needs it is
- * visited without one, and stays reachable afterward through the inline
- * banner if dismissed.
+ * Renders nothing once a working session is on file.
  */
 export function LinkedInConnectDialog() {
-  const status = useLinkedInSessionStatus();
-  const upload = useUploadLinkedInSession();
-
   const [open, setOpen] = React.useState(false);
-  const [file, setFile] = React.useState<File | null>(null);
+  const [copied, setCopied] = React.useState(false);
   const autoOpened = React.useRef(false);
+  const hadPendingConnection = React.useRef(false);
+
+  const status = useLinkedInSessionStatus(open);
+  const connectToken = useCreateLinkedInConnectToken();
 
   const restricted = isLinkedInSessionRestricted(status.data);
   const needsConnection = status.data === null || restricted;
 
+  // Auto-open the first time this page loads without a working session.
   React.useEffect(() => {
     if (autoOpened.current || status.isPending || !needsConnection) return;
     autoOpened.current = true;
     setOpen(true);
   }, [status.isPending, needsConnection]);
 
+  // A fresh code every time the dialog opens — the last one may have expired.
+  React.useEffect(() => {
+    if (open) connectToken.mutate();
+    // connectToken is a fresh object each render; only re-run when the dialog opens.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open]);
+
+  // Notice the session landing (via the poll above) and close automatically.
+  React.useEffect(() => {
+    if (!open) return;
+
+    if (needsConnection) {
+      hadPendingConnection.current = true;
+      return;
+    }
+
+    if (hadPendingConnection.current) {
+      hadPendingConnection.current = false;
+      toast.success('LinkedIn account connected.');
+      setOpen(false);
+    }
+  }, [open, needsConnection]);
+
   if (status.isPending || !needsConnection) return null;
 
-  const handleUpload = (): void => {
-    if (!file) return;
-    upload.mutate(file, {
-      onSuccess: () => {
-        toast.success('LinkedIn account connected.');
-        setFile(null);
-        setOpen(false);
-      },
-      onError: (error) => toast.error(error.message),
+  const command = connectToken.data ? buildCommand(connectToken.data.token, connectToken.data.apiBaseUrl) : null;
+
+  const handleCopy = (): void => {
+    if (!command) return;
+    void navigator.clipboard.writeText(command).then(() => {
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
     });
   };
 
@@ -83,13 +107,11 @@ export function LinkedInConnectDialog() {
       <Dialog open={open} onOpenChange={setOpen}>
         <DialogContent>
           <DialogHeader>
-            <DialogTitle>
-              {restricted ? 'LinkedIn account paused' : 'Connect your LinkedIn account'}
-            </DialogTitle>
+            <DialogTitle>{restricted ? 'LinkedIn account paused' : 'Connect your LinkedIn account'}</DialogTitle>
             <DialogDescription>
               {restricted
-                ? "LinkedIn flagged unusual activity on this account, so it's paused to protect it from further restriction. It resumes automatically once the cooldown passes, or you can connect a different account below."
-                : "To use LinkedIn Enrichment and People Search, this app needs your own LinkedIn session — never your password. Each user connects their own account, logged in entirely on your own machine."}
+                ? "LinkedIn flagged unusual activity on this account, so it's paused to protect it from further restriction. It resumes automatically once the cooldown passes, or logging in again below clears it early."
+                : 'This runs entirely on your own machine — your LinkedIn password never touches this app, only the resulting session.'}
             </DialogDescription>
           </DialogHeader>
 
@@ -101,40 +123,47 @@ export function LinkedInConnectDialog() {
           )}
 
           <ol className="list-decimal space-y-2 pl-4 text-sm text-muted-foreground">
+            <li>Copy the command below and run it in a terminal on your own machine.</li>
             <li>
-              On your own machine, run the local login tool at{' '}
-              <code className="rounded bg-muted px-1 py-0.5 text-xs text-foreground">
-                {LOGIN_TOOL_PATH}
-              </code>
-              .
+              Log in with your own LinkedIn account in the window it opens, then press Enter in
+              that terminal.
             </li>
-            <li>
-              Log in with your own LinkedIn account in the window it opens — your credentials never
-              touch this app.
-            </li>
-            <li>Upload the session file it saves when you&apos;re done, below.</li>
+            <li>That&apos;s it — this closes on its own once it&apos;s connected.</li>
           </ol>
 
-          <Button variant="outline" asChild className="w-fit">
-            <a href="https://www.linkedin.com/login" target="_blank" rel="noopener noreferrer">
-              <ExternalLink />
-              Open LinkedIn to sign in
-            </a>
-          </Button>
+          <div className="space-y-2">
+            {command ? (
+              <div className="flex items-start gap-2">
+                <code className="flex-1 overflow-x-auto rounded-md border border-border bg-muted px-3 py-2 text-xs">
+                  {command}
+                </code>
+                <Button variant="outline" size="icon" onClick={handleCopy} aria-label="Copy command">
+                  {copied ? <Check className="text-success" /> : <Copy />}
+                </Button>
+              </div>
+            ) : (
+              <div className="flex items-center gap-2 text-sm text-muted-foreground">
+                <Loader2 className="size-4 animate-spin" />
+                Generating your connect code…
+              </div>
+            )}
 
-          <Input
-            type="file"
-            accept="application/json"
-            onChange={(event) => setFile(event.target.files?.[0] ?? null)}
-          />
+            {connectToken.data && (
+              <p className="text-xs text-muted-foreground">
+                Valid for 15 minutes. Waiting for it to run — this page checks automatically.
+              </p>
+            )}
+
+            {connectToken.isError && (
+              <p className="text-xs text-destructive">
+                Could not generate a connect code: {connectToken.error.message}
+              </p>
+            )}
+          </div>
 
           <DialogFooter>
             <Button variant="ghost" onClick={() => setOpen(false)}>
               Not now
-            </Button>
-            <Button onClick={handleUpload} disabled={!file} loading={upload.isPending}>
-              <UploadCloud />
-              Connect
             </Button>
           </DialogFooter>
         </DialogContent>

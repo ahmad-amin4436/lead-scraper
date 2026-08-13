@@ -58,3 +58,15 @@ export interface LinkedInSessionStatus {
   restrictedUntil: string | null;
   restrictedReason: string | null;
 }
+
+/**
+ * A short-lived code `backend/tools/LinkedInLogin` redeems to push a captured
+ * session straight to the caller's account. `apiBaseUrl` is the .NET API's
+ * own public URL — the tool runs on the user's machine and calls it directly,
+ * never through this app's Next.js proxy.
+ */
+export interface LinkedInConnectToken {
+  token: string;
+  expiresAt: string;
+  apiBaseUrl: string;
+}

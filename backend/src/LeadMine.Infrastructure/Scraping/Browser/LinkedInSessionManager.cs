@@ -1,4 +1,5 @@
 using System.Collections.Concurrent;
+using System.Security.Cryptography;
 using LeadMine.Domain.Entities;
 using LeadMine.Infrastructure.Persistence;
 using LeadMine.Infrastructure.Scraping.Providers;
@@ -59,6 +60,13 @@ public sealed class LinkedInSessionManager(
 {
     /// <summary>One gate per user — see the class remarks.</summary>
     private readonly ConcurrentDictionary<Guid, SemaphoreSlim> _gates = new();
+
+    /// <summary>
+    /// Short-lived, single-use connect codes — see <see cref="CreateConnectToken"/>.
+    /// In-memory by design: losing one on a restart just means the user
+    /// generates a new one, and nothing worth persisting happened yet.
+    /// </summary>
+    private readonly ConcurrentDictionary<string, (Guid UserId, DateTimeOffset ExpiresAt)> _connectTokens = new();
 
     /// <summary>
     /// High-confidence phrases from LinkedIn's own restriction/verification
@@ -312,6 +320,44 @@ public sealed class LinkedInSessionManager(
 
         session.SearchesToday++;
         await db.SaveChangesAsync(ct);
+    }
+
+    /// <summary>
+    /// Mints a short-lived (15-minute), single-use code so
+    /// <c>backend/tools/LinkedInLogin</c> can push a captured session straight
+    /// to this user's account over the API, instead of the user manually
+    /// downloading and re-uploading a file. The tool has no browser session of
+    /// its own to authenticate with, so this code — not a bearer token — is
+    /// what proves which account the session it captures belongs to.
+    /// </summary>
+    public (string Token, DateTimeOffset ExpiresAt) CreateConnectToken(Guid userId)
+    {
+        foreach (var (key, entry) in _connectTokens)
+        {
+            if (entry.ExpiresAt <= DateTimeOffset.UtcNow) _connectTokens.TryRemove(key, out _);
+        }
+
+        var token = Convert.ToHexString(RandomNumberGenerator.GetBytes(32));
+        var expiresAt = DateTimeOffset.UtcNow.AddMinutes(15);
+        _connectTokens[token] = (userId, expiresAt);
+
+        return (token, expiresAt);
+    }
+
+    /// <summary>
+    /// Redeems a code from <see cref="CreateConnectToken"/> and saves the
+    /// session it carries against the user it was minted for. Single-use: the
+    /// code is removed the moment it's looked up, valid or not. Returns false
+    /// for an unknown, already-used, or expired code — the caller turns that
+    /// into a 400 telling the user to generate a new one.
+    /// </summary>
+    public async Task<bool> RedeemConnectTokenAsync(string token, string storageStateJson, CancellationToken ct)
+    {
+        if (!_connectTokens.TryRemove(token, out var entry)) return false;
+        if (entry.ExpiresAt <= DateTimeOffset.UtcNow) return false;
+
+        await UploadSessionAsync(entry.UserId, storageStateJson, ct);
+        return true;
     }
 
     /// <summary>

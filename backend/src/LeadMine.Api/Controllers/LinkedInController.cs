@@ -27,10 +27,14 @@ namespace LeadMine.Api.Controllers;
 /// </para>
 /// <para>
 /// Also owns the self-service LinkedIn session endpoints at the bottom of this
-/// file: each user uploads their own <c>storageState.json</c> (from running
+/// file: each user connects their own account by running
 /// <c>backend/tools/LinkedInLogin</c> on their own machine, logged into their
-/// own LinkedIn account) rather than the app sharing one dedicated account —
-/// see <see cref="LinkedInSessionManager"/>'s remarks for why.
+/// own LinkedIn account, rather than the app sharing one dedicated account —
+/// see <see cref="LinkedInSessionManager"/>'s remarks for why. The tool pushes
+/// the captured session straight to the caller's account using a short-lived
+/// connect code (<c>session/connect-token</c> + <c>session/by-token</c>);
+/// <c>session</c> itself remains available for a manual file upload/status
+/// check/removal.
 /// </para>
 /// </summary>
 [Authorize]
@@ -210,4 +214,65 @@ public sealed class LinkedInController(
         await linkedInSession.RemoveSessionAsync(userId, ct);
         return NoContent();
     }
+
+    /// <summary>
+    /// Mints a short-lived code the "Connect your LinkedIn account" dialog
+    /// hands to <c>backend/tools/LinkedInLogin</c> so the tool can push the
+    /// captured session straight to the caller's account — see
+    /// <see cref="LinkedInSessionManager.CreateConnectToken"/>.
+    /// </summary>
+    [HttpPost("session/connect-token")]
+    [ProducesResponseType(typeof(CreateLinkedInConnectTokenResponse), StatusCodes.Status200OK)]
+    public ActionResult<CreateLinkedInConnectTokenResponse> CreateConnectToken()
+    {
+        if (currentUser.UserId is not { } userId) return Unauthorized();
+
+        var (token, expiresAt) = linkedInSession.CreateConnectToken(userId);
+        return Ok(new CreateLinkedInConnectTokenResponse(token, expiresAt));
+    }
+
+    /// <summary>
+    /// Called by <c>backend/tools/LinkedInLogin</c> itself, not the browser —
+    /// it has no bearer token to authenticate with, so the connect code from
+    /// <see cref="CreateConnectToken"/> stands in for one. Anonymous by
+    /// necessity, but the code is a single-use, 15-minute, 256-bit random
+    /// value, so this is not meaningfully more exposed than the code itself.
+    /// </summary>
+    [HttpPost("session/by-token")]
+    [AllowAnonymous]
+    [ProducesResponseType(StatusCodes.Status204NoContent)]
+    [ProducesResponseType(StatusCodes.Status400BadRequest)]
+    public async Task<IActionResult> RedeemConnectToken(RedeemLinkedInConnectTokenRequest request, CancellationToken ct)
+    {
+        if (string.IsNullOrWhiteSpace(request.Token) || string.IsNullOrWhiteSpace(request.StorageStateJson))
+        {
+            return BadRequest("Token and session content are required.");
+        }
+
+        if (request.StorageStateJson.Length > 1_000_000)
+        {
+            return BadRequest("That session looks too large to be valid.");
+        }
+
+        try
+        {
+            using var _ = JsonDocument.Parse(request.StorageStateJson);
+        }
+        catch (JsonException)
+        {
+            return BadRequest("That doesn't look like a valid storageState.json file.");
+        }
+
+        var redeemed = await linkedInSession.RedeemConnectTokenAsync(request.Token, request.StorageStateJson, ct);
+        if (!redeemed)
+        {
+            return BadRequest("That connect code is invalid or has expired. Generate a new one from the app and try again.");
+        }
+
+        return NoContent();
+    }
 }
+
+public sealed record CreateLinkedInConnectTokenResponse(string Token, DateTimeOffset ExpiresAt);
+
+public sealed record RedeemLinkedInConnectTokenRequest(string Token, string StorageStateJson);

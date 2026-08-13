@@ -1452,3 +1452,47 @@ GO
 COMMIT;
 GO
 
+BEGIN TRANSACTION;
+GO
+
+IF NOT EXISTS (
+    SELECT * FROM [__EFMigrationsHistory]
+    WHERE [MigrationId] = N'20260813112855_AddLinkedInAccountSessions'
+)
+BEGIN
+    CREATE TABLE [LinkedInAccountSessions] (
+        [Id] uniqueidentifier NOT NULL,
+        [UserId] uniqueidentifier NOT NULL,
+        [StorageStateJson] nvarchar(max) NOT NULL,
+        [UploadedAt] datetimeoffset NOT NULL,
+        [BudgetDate] date NOT NULL,
+        [SearchesToday] int NOT NULL,
+        [RestrictedAt] datetimeoffset NULL,
+        [RestrictedReason] nvarchar(512) NULL,
+        CONSTRAINT [PK_LinkedInAccountSessions] PRIMARY KEY ([Id])
+    );
+END;
+GO
+
+IF NOT EXISTS (
+    SELECT * FROM [__EFMigrationsHistory]
+    WHERE [MigrationId] = N'20260813112855_AddLinkedInAccountSessions'
+)
+BEGIN
+    CREATE UNIQUE INDEX [IX_LinkedInAccountSessions_UserId] ON [LinkedInAccountSessions] ([UserId]);
+END;
+GO
+
+IF NOT EXISTS (
+    SELECT * FROM [__EFMigrationsHistory]
+    WHERE [MigrationId] = N'20260813112855_AddLinkedInAccountSessions'
+)
+BEGIN
+    INSERT INTO [__EFMigrationsHistory] ([MigrationId], [ProductVersion])
+    VALUES (N'20260813112855_AddLinkedInAccountSessions', N'8.0.11');
+END;
+GO
+
+COMMIT;
+GO
+
