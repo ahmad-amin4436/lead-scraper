@@ -1,4 +1,5 @@
 using System.Text.Json;
+using LeadMine.Application.Authorization;
 using LeadMine.Application.DTOs;
 using LeadMine.Application.Interfaces;
 using LeadMine.Domain.Entities;
@@ -109,6 +110,19 @@ public sealed class LinkedInEnrichmentRunner(
 
         var context = new ProviderContext(state.Options, new RateLimiter(state.Options.RateLimitPerMinute), null);
 
+        // Mirrors BusinessService.ScopeToCaller: a caller with leads.view-all
+        // can select any lead in the picker, not just their own, so the
+        // enrichment lookup below must honour that too — otherwise every
+        // lead they don't personally own comes back "not found" even though
+        // they could see and select it a moment earlier. Checked once
+        // up-front against the job's owner rather than per lead.
+        bool canViewAllLeads;
+        await using (var permissionScope = scopeFactory.CreateAsyncScope())
+        {
+            canViewAllLeads = await permissionScope.ServiceProvider.GetRequiredService<IPermissionService>()
+                .HasPermissionAsync(state.OwnerUserId, Permissions.Leads.ViewAll, ct);
+        }
+
         foreach (var businessId in remaining)
         {
             if (ct.IsCancellationRequested) break;
@@ -118,7 +132,7 @@ public sealed class LinkedInEnrichmentRunner(
             var audit = scope.ServiceProvider.GetRequiredService<IAuditService>();
 
             var lead = await db.Businesses
-                .FirstOrDefaultAsync(b => b.Id == businessId && b.OwnerUserId == state.OwnerUserId, ct);
+                .FirstOrDefaultAsync(b => b.Id == businessId && (canViewAllLeads || b.OwnerUserId == state.OwnerUserId), ct);
 
             if (lead is null)
             {
