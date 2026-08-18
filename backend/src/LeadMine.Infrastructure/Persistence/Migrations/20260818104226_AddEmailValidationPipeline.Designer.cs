@@ -4,6 +4,7 @@ using LeadMine.Infrastructure.Persistence;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
 using Microsoft.EntityFrameworkCore.Metadata;
+using Microsoft.EntityFrameworkCore.Migrations;
 using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 
 #nullable disable
@@ -11,9 +12,11 @@ using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 namespace LeadMine.Infrastructure.Persistence.Migrations
 {
     [DbContext(typeof(LeadMineDbContext))]
-    partial class LeadMineDbContextModelSnapshot : ModelSnapshot
+    [Migration("20260818104226_AddEmailValidationPipeline")]
+    partial class AddEmailValidationPipeline
     {
-        protected override void BuildModel(ModelBuilder modelBuilder)
+        /// <inheritdoc />
+        protected override void BuildTargetModel(ModelBuilder modelBuilder)
         {
 #pragma warning disable 612, 618
             modelBuilder

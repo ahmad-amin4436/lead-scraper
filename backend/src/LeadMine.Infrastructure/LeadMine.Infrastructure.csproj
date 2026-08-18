@@ -25,4 +25,11 @@
     <Nullable>enable</Nullable>
   </PropertyGroup>
 
+  <ItemGroup>
+    <!-- ~8,300 known disposable/throwaway email domains (disposable-email-domains
+         project), loaded at startup by DisposableDomainList. Embedded rather than
+         read from disk so it works identically in dev and in a published build. -->
+    <EmbeddedResource Include="Scraping\Verification\Resources\disposable-domains.txt" />
+  </ItemGroup>
+
 </Project>

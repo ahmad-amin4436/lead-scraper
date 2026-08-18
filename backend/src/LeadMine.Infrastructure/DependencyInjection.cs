@@ -266,6 +266,19 @@ public static class DependencyInjection
         services.AddSingleton<EmailVerifier>();
         services.AddSingleton<VerificationService>();
 
+        // Email validation pipeline. Bound but not .ValidateOnStart() — like
+        // SmtpOptions, the bounce-check mailbox credentials are optional (that
+        // pass stays off until explicitly enabled and configured), so a blank
+        // value here must not crash the app.
+        services.AddOptions<EmailValidationOptions>()
+            .Bind(configuration.GetSection(EmailValidationOptions.SectionName))
+            .ValidateDataAnnotations();
+
+        services.AddSingleton<SmtpProbe>();
+        services.AddSingleton<EmailValidationPipeline>();
+        services.AddHostedService<EmailValidationWorkerService>();
+        services.AddHostedService<EmailBounceCheckWorkerService>();
+
         // Owns the one shared Chromium process for every Playwright-backed
         // provider. Registered as its own interface-free singleton (not
         // AddHostedService) because it has no background work of its own to

@@ -45,6 +45,8 @@ public class LeadMineDbContext(
 
     public DbSet<LinkedInAccountSession> LinkedInAccountSessions => Set<LinkedInAccountSession>();
 
+    public DbSet<EmailBounceCheck> EmailBounceChecks => Set<EmailBounceCheck>();
+
     protected override void OnModelCreating(ModelBuilder builder)
     {
         base.OnModelCreating(builder);

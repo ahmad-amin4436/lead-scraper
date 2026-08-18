@@ -1496,3 +1496,120 @@ GO
 COMMIT;
 GO
 
+BEGIN TRANSACTION;
+GO
+
+IF NOT EXISTS (
+    SELECT * FROM [__EFMigrationsHistory]
+    WHERE [MigrationId] = N'20260818104226_AddEmailValidationPipeline'
+)
+BEGIN
+    ALTER TABLE [Businesses] ADD [EmailConfidence] int NULL;
+END;
+GO
+
+IF NOT EXISTS (
+    SELECT * FROM [__EFMigrationsHistory]
+    WHERE [MigrationId] = N'20260818104226_AddEmailValidationPipeline'
+)
+BEGIN
+    ALTER TABLE [Businesses] ADD [EmailIsCatchAll] bit NULL;
+END;
+GO
+
+IF NOT EXISTS (
+    SELECT * FROM [__EFMigrationsHistory]
+    WHERE [MigrationId] = N'20260818104226_AddEmailValidationPipeline'
+)
+BEGIN
+    ALTER TABLE [Businesses] ADD [EmailIsDisposable] bit NULL;
+END;
+GO
+
+IF NOT EXISTS (
+    SELECT * FROM [__EFMigrationsHistory]
+    WHERE [MigrationId] = N'20260818104226_AddEmailValidationPipeline'
+)
+BEGIN
+    ALTER TABLE [Businesses] ADD [EmailIsRoleAccount] bit NULL;
+END;
+GO
+
+IF NOT EXISTS (
+    SELECT * FROM [__EFMigrationsHistory]
+    WHERE [MigrationId] = N'20260818104226_AddEmailValidationPipeline'
+)
+BEGIN
+    ALTER TABLE [Businesses] ADD [EmailValidatedAt] datetimeoffset NULL;
+END;
+GO
+
+IF NOT EXISTS (
+    SELECT * FROM [__EFMigrationsHistory]
+    WHERE [MigrationId] = N'20260818104226_AddEmailValidationPipeline'
+)
+BEGIN
+    ALTER TABLE [Businesses] ADD [EmailValidationDetailsJson] nvarchar(max) NULL;
+END;
+GO
+
+IF NOT EXISTS (
+    SELECT * FROM [__EFMigrationsHistory]
+    WHERE [MigrationId] = N'20260818104226_AddEmailValidationPipeline'
+)
+BEGIN
+    CREATE TABLE [EmailBounceChecks] (
+        [Id] uniqueidentifier NOT NULL,
+        [BusinessId] uniqueidentifier NOT NULL,
+        [Email] nvarchar(256) NOT NULL,
+        [Status] int NOT NULL,
+        [SentAt] datetimeoffset NOT NULL,
+        [MessageId] nvarchar(256) NOT NULL,
+        [ResolvedAt] datetimeoffset NULL,
+        [BounceReason] nvarchar(512) NULL,
+        CONSTRAINT [PK_EmailBounceChecks] PRIMARY KEY ([Id]),
+        CONSTRAINT [FK_EmailBounceChecks_Businesses_BusinessId] FOREIGN KEY ([BusinessId]) REFERENCES [Businesses] ([Id]) ON DELETE CASCADE
+    );
+END;
+GO
+
+IF NOT EXISTS (
+    SELECT * FROM [__EFMigrationsHistory]
+    WHERE [MigrationId] = N'20260818104226_AddEmailValidationPipeline'
+)
+BEGIN
+    CREATE INDEX [IX_Businesses_EmailValidatedAt] ON [Businesses] ([EmailValidatedAt]);
+END;
+GO
+
+IF NOT EXISTS (
+    SELECT * FROM [__EFMigrationsHistory]
+    WHERE [MigrationId] = N'20260818104226_AddEmailValidationPipeline'
+)
+BEGIN
+    CREATE INDEX [IX_EmailBounceChecks_BusinessId] ON [EmailBounceChecks] ([BusinessId]);
+END;
+GO
+
+IF NOT EXISTS (
+    SELECT * FROM [__EFMigrationsHistory]
+    WHERE [MigrationId] = N'20260818104226_AddEmailValidationPipeline'
+)
+BEGIN
+    CREATE INDEX [IX_EmailBounceChecks_Status_SentAt] ON [EmailBounceChecks] ([Status], [SentAt]);
+END;
+GO
+
+IF NOT EXISTS (
+    SELECT * FROM [__EFMigrationsHistory]
+    WHERE [MigrationId] = N'20260818104226_AddEmailValidationPipeline'
+)
+BEGIN
+    INSERT INTO [__EFMigrationsHistory] ([MigrationId], [ProductVersion])
+    VALUES (N'20260818104226_AddEmailValidationPipeline', N'8.0.11');
+END;
+GO
+
+COMMIT;
+GO
+

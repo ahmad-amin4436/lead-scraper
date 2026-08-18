@@ -9,7 +9,17 @@ using Microsoft.Extensions.Logging;
 
 namespace LeadMine.Infrastructure.Scraping.Verification;
 
-public sealed record EmailVerification(EmailStatus Status, string Reason);
+/// <param name="MxHosts">
+/// MX exchange hosts found for the domain, most-preferred first, if any — used
+/// by the optional SMTP probe (<see cref="EmailValidationPipeline"/>) so it
+/// doesn't need to repeat the DNS lookup this verifier already did.
+/// </param>
+public sealed record EmailVerification(
+    EmailStatus Status,
+    string Reason,
+    bool IsDisposable = false,
+    bool IsRoleAccount = false,
+    IReadOnlyList<string>? MxHosts = null);
 
 /// <summary>
 /// Email deliverability checking.
@@ -27,7 +37,10 @@ public sealed record EmailVerification(EmailStatus Status, string Reason);
 /// </para>
 /// <para>
 /// <see cref="EmailStatus.Valid"/> therefore means "safe to attempt", not
-/// "guaranteed to land".
+/// "guaranteed to land". An RCPT TO probe is available as a separate, opt-in
+/// step — see <see cref="SmtpProbe"/> and <see cref="EmailValidationOptions.EnableSmtpProbe"/>
+/// — for callers willing to accept the trade-offs above in exchange for a
+/// stronger signal; it stays off this class's own code path by design.
 /// </para>
 /// </summary>
 public sealed partial class EmailVerifier(ILogger<EmailVerifier> logger)
@@ -38,20 +51,6 @@ public sealed partial class EmailVerifier(ILogger<EmailVerifier> logger)
     /// <summary>Cheap structural check; the DNS lookup is the expensive part.</summary>
     [GeneratedRegex(@"^[^\s@]+@[^\s@.]+(\.[^\s@.]+)+$", RegexOptions.None, 500)]
     private static partial Regex Syntax();
-
-    /// <summary>
-    /// Throwaway inbox providers. Mail routes fine, but the recipient is
-    /// transient, so these are flagged risky rather than valid.
-    /// </summary>
-    private static readonly HashSet<string> DisposableDomains = new(StringComparer.OrdinalIgnoreCase)
-    {
-        "mailinator.com", "guerrillamail.com", "guerrillamail.net", "10minutemail.com",
-        "tempmail.com", "temp-mail.org", "throwawaymail.com", "yopmail.com",
-        "trashmail.com", "sharklasers.com", "getnada.com", "dispostable.com",
-        "maildrop.cc", "fakeinbox.com", "mintemail.com", "mytemp.email",
-        "spamgourmet.com", "mailnesia.com", "tempinbox.com", "emailondeck.com",
-        "moakt.com", "burnermail.io", "anonaddy.com", "simplelogin.io",
-    };
 
     /// <summary>
     /// Shared-mailbox prefixes. Perfectly deliverable and usually the *right*
@@ -103,21 +102,22 @@ public sealed partial class EmailVerifier(ILogger<EmailVerifier> logger)
             return new EmailVerification(EmailStatus.Invalid, "Local part exceeds 64 characters");
         }
 
-        if (DisposableDomains.Contains(domain))
+        if (DisposableDomainList.Contains(domain))
         {
-            return new EmailVerification(EmailStatus.Risky, "Disposable email provider");
+            return new EmailVerification(EmailStatus.Risky, "Disposable email provider", IsDisposable: true);
         }
 
         var domainResult = await VerifyDomainAsync(domain, ct);
+        var isRole = RolePrefixes.Contains(localPart);
 
         // Role mailboxes are usually the correct B2B contact, so they stay valid;
         // the reason line just makes the distinction visible.
-        if (domainResult.Status == EmailStatus.Valid && RolePrefixes.Contains(localPart))
+        if (domainResult.Status == EmailStatus.Valid && isRole)
         {
-            return new EmailVerification(EmailStatus.Valid, "Deliverable shared/role mailbox");
+            return domainResult with { Reason = "Deliverable shared/role mailbox", IsRoleAccount = true };
         }
 
-        return domainResult;
+        return isRole ? domainResult with { IsRoleAccount = true } : domainResult;
     }
 
     private async Task<EmailVerification> VerifyDomainAsync(string domain, CancellationToken ct)
@@ -154,7 +154,13 @@ public sealed partial class EmailVerifier(ILogger<EmailVerifier> logger)
 
             if (usable.Count > 0)
             {
-                result = new EmailVerification(EmailStatus.Valid, "Domain accepts mail (MX record found)");
+                // Preference order matches the MX standard: lower Preference wins.
+                var hosts = usable
+                    .OrderBy(r => r.Preference)
+                    .Select(r => r.Exchange.Value.TrimEnd('.'))
+                    .ToList();
+
+                result = new EmailVerification(EmailStatus.Valid, "Domain accepts mail (MX record found)", MxHosts: hosts);
             }
             else if (response.Header.ResponseCode == DnsHeaderResponseCode.NotExistentDomain)
             {

@@ -42,6 +42,9 @@ public class BusinessConfiguration : IEntityTypeConfiguration<Business>
         builder.Property(b => b.EmailStatus).HasConversion<int>();
         builder.Property(b => b.WhatsAppStatus).HasConversion<int>();
 
+        // EmailValidationDetailsJson is free-form diagnostic detail, unbounded on
+        // purpose — see the property's doc comment on Business.
+
         // No HasPrecision here. Precision/scale are decimal concepts; applied to
         // a double EF emits `float(3)`, which SQL Server stores as 4-byte `real`
         // — so a rating of 4.9 came back as 4.900000095367432 and would show
@@ -60,6 +63,10 @@ public class BusinessConfiguration : IEntityTypeConfiguration<Business>
         // the table; the composite matches the default "my leads, newest first".
         builder.HasIndex(b => b.OwnerUserId);
         builder.HasIndex(b => new { b.OwnerUserId, b.CreatedAt });
+
+        // EmailValidationWorkerService's queue query: "leads with an email that
+        // have never been validated, or were validated before some cutoff".
+        builder.HasIndex(b => b.EmailValidatedAt);
 
         // Duplicate detection: filtered so many NULLs don't bloat the index.
         builder.HasIndex(b => b.DedupeWebsiteKey).HasFilter("[DedupeWebsiteKey] IS NOT NULL");
@@ -212,5 +219,41 @@ public class LinkedInAccountSessionConfiguration : IEntityTypeConfiguration<Link
         // One session per user — every lookup and the upload upsert both go
         // through this, so it is the hot path for the whole feature.
         builder.HasIndex(s => s.UserId).IsUnique();
+    }
+}
+
+public class EmailBounceCheckConfiguration : IEntityTypeConfiguration<EmailBounceCheck>
+{
+    public void Configure(EntityTypeBuilder<EmailBounceCheck> builder)
+    {
+        builder.ToTable("EmailBounceChecks");
+        builder.HasKey(c => c.Id);
+
+        builder.Property(c => c.Email).HasMaxLength(256).IsRequired();
+        builder.Property(c => c.MessageId).HasMaxLength(256);
+        builder.Property(c => c.BounceReason).HasMaxLength(512);
+        builder.Property(c => c.Status).HasConversion<int>();
+
+        builder.HasOne(c => c.Business)
+            .WithMany()
+            .HasForeignKey(c => c.BusinessId)
+            // Unlike EmailLog/WhatsAppContactLog (which outlive their lead on
+            // purpose, as permanent contact history), a bounce check is purely
+            // operational tracking for a probe against one specific lead — once
+            // the lead is gone there's nothing left to resolve it for.
+            .OnDelete(DeleteBehavior.Cascade);
+
+        builder.HasIndex(c => c.BusinessId);
+
+        // EmailBounceCheckWorkerService's two hot queries: "what's still Pending
+        // and old enough to time out" and "how many did we send today/this hour".
+        builder.HasIndex(c => new { c.Status, c.SentAt });
+
+        // Business carries a soft-delete filter but this is a required (non-
+        // nullable) relationship to it — without a matching filter here, a
+        // query that eager-loads .Business on a check whose lead was soft-
+        // deleted would see a null Business despite the relationship being
+        // "required", which EF Core warns is exactly this kind of trap.
+        builder.HasQueryFilter(c => !c.Business!.IsDeleted);
     }
 }

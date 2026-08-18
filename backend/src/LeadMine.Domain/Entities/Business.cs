@@ -143,4 +143,36 @@ public class Business : AuditableEntity
 
     /// <summary>Decision-makers found at this company via LinkedIn people search.</summary>
     public ICollection<Person> People { get; set; } = new List<Person>();
+
+    // --- Email validation pipeline ---------------------------------------------
+    // See EmailValidationPipeline. EmailStatus above still carries the final
+    // verdict (existing callers/filters read only that); everything below is the
+    // supporting detail for how that verdict was reached.
+
+    /// <summary>0-100. Null until the pipeline has evaluated this address.</summary>
+    public int? EmailConfidence { get; set; }
+
+    public DateTimeOffset? EmailValidatedAt { get; set; }
+
+    public bool? EmailIsDisposable { get; set; }
+
+    /// <summary>A shared/team mailbox (info@, sales@, ...) rather than a named person.</summary>
+    public bool? EmailIsRoleAccount { get; set; }
+
+    /// <summary>
+    /// True when the domain's mail server accepts RCPT TO for any address, not
+    /// just this one — an SMTP "accepted" result on a catch-all domain proves
+    /// nothing about this specific mailbox, so confidence is capped rather than
+    /// maxed out. Null when the SMTP probe never ran (off by default — see
+    /// EmailValidationOptions.EnableSmtpProbe).
+    /// </summary>
+    public bool? EmailIsCatchAll { get; set; }
+
+    /// <summary>
+    /// Serialized <c>EmailValidationDetails</c> (Infrastructure layer) — MX
+    /// hosts used, the SMTP probe outcome, and bounce-check state. Free-form
+    /// JSON rather than more columns so new diagnostic detail doesn't need a
+    /// migration every time.
+    /// </summary>
+    public string? EmailValidationDetailsJson { get; set; }
 }

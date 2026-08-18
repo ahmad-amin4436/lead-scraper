@@ -112,3 +112,21 @@ public enum ActivityLogLevel
     Warning = 2,
     Error = 3,
 }
+
+/// <summary>
+/// Lifecycle of one send-and-watch-for-bounce attempt (<c>EmailBounceCheckWorkerService</c>).
+/// </summary>
+public enum EmailBounceCheckStatus
+{
+    /// <summary>Probe sent; still inside the wait window.</summary>
+    Pending = 0,
+
+    /// <summary>No bounce arrived before the wait window elapsed — treated as confirmed deliverable.</summary>
+    Confirmed = 1,
+
+    /// <summary>A delivery-failure notice matched back to this attempt.</summary>
+    Bounced = 2,
+
+    /// <summary>The probe send itself failed (SMTP error) — inconclusive, not a bounce.</summary>
+    SendFailed = 3,
+}
