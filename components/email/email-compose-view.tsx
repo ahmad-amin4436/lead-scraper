@@ -50,9 +50,19 @@ const INHERIT = '__inherit__';
  * `hasBeenContacted=false`, so re-running this page doesn't re-select someone
  * already contacted and waste a send against the daily cap.
  */
+const EMAIL_STATUS_OPTIONS = [
+  { value: 'all', label: 'All statuses' },
+  { value: 'Valid', label: 'Valid' },
+  { value: 'Risky', label: 'Risky' },
+  { value: 'Invalid', label: 'Invalid' },
+  { value: 'Unverified', label: 'Unverified' },
+  { value: 'Unknown', label: 'Unknown' },
+] as const;
+
 export function EmailComposeView() {
   const [search, setSearch] = React.useState('');
   const [hideContacted, setHideContacted] = React.useState(true);
+  const [emailStatusFilter, setEmailStatusFilter] = React.useState<string>('Valid');
   const [templateId, setTemplateId] = React.useState<string>('');
   const [signatureId, setSignatureId] = React.useState<string>(INHERIT);
   const [selected, setSelected] = React.useState<Set<string>>(new Set());
@@ -64,6 +74,10 @@ export function EmailComposeView() {
     search: debouncedSearch || undefined,
     // Recipients must have somewhere to send to.
     kind: 'EmailOnly',
+    // Defaults to Valid: the whole point of the validation pipeline is
+    // knowing which addresses are worth spending a send on. "All statuses"
+    // is still one click away for anyone who wants to see Risky/Invalid too.
+    emailStatus: emailStatusFilter === 'all' ? undefined : emailStatusFilter,
     // On by default: a lead already emailed shouldn't be re-selected by
     // accident and burn a send against the daily cap on a repeat.
     hasBeenContacted: hideContacted ? false : undefined,
@@ -187,13 +201,33 @@ export function EmailComposeView() {
               />
             </div>
 
-            <label className="flex cursor-pointer items-center gap-2 text-sm text-muted-foreground">
-              <Checkbox
-                checked={hideContacted}
-                onCheckedChange={(value) => setHideContacted(value === true)}
-              />
-              Hide leads already emailed
-            </label>
+            <div className="flex flex-wrap items-center justify-between gap-3">
+              <label className="flex cursor-pointer items-center gap-2 text-sm text-muted-foreground">
+                <Checkbox
+                  checked={hideContacted}
+                  onCheckedChange={(value) => setHideContacted(value === true)}
+                />
+                Hide leads already emailed
+              </label>
+
+              <div className="flex items-center gap-2">
+                <Label htmlFor="emailStatusFilter" className="text-xs text-muted-foreground">
+                  Status
+                </Label>
+                <Select value={emailStatusFilter} onValueChange={setEmailStatusFilter}>
+                  <SelectTrigger id="emailStatusFilter" className="h-8 w-[140px] text-xs">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {EMAIL_STATUS_OPTIONS.map((option) => (
+                      <SelectItem key={option.value} value={option.value}>
+                        {option.label}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+            </div>
 
             {leads.isPending ? (
               <div className="space-y-2">
@@ -204,11 +238,19 @@ export function EmailComposeView() {
             ) : rows.length === 0 ? (
               <EmptyState
                 icon={<Mail />}
-                title={hideContacted ? 'Nothing left to email' : 'No emailable leads'}
+                title={
+                  emailStatusFilter !== 'all'
+                    ? `No ${emailStatusFilter.toLowerCase()} leads`
+                    : hideContacted
+                      ? 'Nothing left to email'
+                      : 'No emailable leads'
+                }
                 description={
-                  hideContacted
-                    ? 'Every lead with an email address has already been sent this. Uncheck "Hide leads already emailed" to see them.'
-                    : 'Run a search with contact enrichment on to collect email addresses.'
+                  emailStatusFilter !== 'all'
+                    ? `No leads currently have a "${emailStatusFilter}" email status. Try "All statuses" instead.`
+                    : hideContacted
+                      ? 'Every lead with an email address has already been sent this. Uncheck "Hide leads already emailed" to see them.'
+                      : 'Run a search with contact enrichment on to collect email addresses.'
                 }
               />
             ) : (
