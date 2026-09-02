@@ -175,6 +175,21 @@ public interface IEmailService
 {
     Task<Result<SendEmailResultDto>> SendAsync(SendEmailRequest request, CancellationToken ct = default);
 
+    /// <summary>
+    /// Sends one recipient's message as an explicit sender rather than the
+    /// ambient <c>ICurrentUser</c> — for <c>EmailSendRunner</c>, a background
+    /// job with no HTTP request to resolve a caller from. Scoping/quota still
+    /// apply exactly as they do for <see cref="SendAsync"/>; the caller
+    /// resolves <paramref name="senderId"/>/<paramref name="canViewAllLeads"/>
+    /// once up front instead of per call.
+    /// </summary>
+    Task<Result<SendEmailResultDto>> SendAsBackgroundJobAsync(
+        Guid senderId,
+        string? senderEmail,
+        bool canViewAllLeads,
+        SendEmailRequest request,
+        CancellationToken ct = default);
+
     Task<Result<EmailPreviewDto>> PreviewAsync(EmailPreviewRequest request, CancellationToken ct = default);
 
     /// <summary>

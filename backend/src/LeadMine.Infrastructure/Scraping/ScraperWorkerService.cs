@@ -105,6 +105,11 @@ public sealed class ScraperWorkerService(
                         var peopleSearchRunner = scope.ServiceProvider.GetRequiredService<LinkedInPeopleSearchRunner>();
                         await peopleSearchRunner.RunAsync(job, slotWorkerId, stoppingToken);
                     }
+                    else if (job.Kind == JobKind.EmailSend)
+                    {
+                        var emailSendRunner = scope.ServiceProvider.GetRequiredService<Email.EmailSendRunner>();
+                        await emailSendRunner.RunAsync(job, slotWorkerId, stoppingToken);
+                    }
                     else
                     {
                         var runner = scope.ServiceProvider.GetRequiredService<SearchRunner>();

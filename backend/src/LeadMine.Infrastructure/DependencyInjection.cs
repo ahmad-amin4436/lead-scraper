@@ -296,6 +296,7 @@ public static class DependencyInjection
         services.AddScoped<SearchRunner>();
         services.AddScoped<LinkedInEnrichmentRunner>();
         services.AddScoped<LinkedInPeopleSearchRunner>();
+        services.AddScoped<Email.EmailSendRunner>();
 
         services.AddHostedService<ScraperWorkerService>();
 

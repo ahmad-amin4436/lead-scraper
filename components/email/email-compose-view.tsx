@@ -1,8 +1,19 @@
 'use client';
 
 import * as React from 'react';
-import { Eye, Mail, Search, Send, TriangleAlert } from 'lucide-react';
+import {
+  AlertTriangle,
+  CheckCircle2,
+  Eye,
+  Mail,
+  Plus,
+  Search,
+  Send,
+  TriangleAlert,
+  XCircle,
+} from 'lucide-react';
 import { toast } from 'sonner';
+import { useQueryClient } from '@tanstack/react-query';
 
 import { PageHeader } from '@/components/shared/page-header';
 import { Badge } from '@/components/ui/badge';
@@ -19,6 +30,7 @@ import {
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Alert, AlertDescription, EmptyState, Separator, Skeleton } from '@/components/ui/misc';
+import { Progress } from '@/components/ui/progress';
 import {
   Select,
   SelectContent,
@@ -28,17 +40,33 @@ import {
 } from '@/components/ui/select';
 import { useBackendBusinesses } from '@/hooks/use-leads';
 import { useDebouncedValue } from '@/hooks/use-debounced-value';
+import { useEmailSendJobPoll } from '@/hooks/use-email-send-job-poll';
 import {
+  useActiveEmailSendJobs,
   useEmailPreview,
+  useEmailSendJobCommand,
   useEmailSignatures,
   useEmailTemplates,
-  useSendEmail,
+  useStartEmailSendJob,
   type EmailPreview,
 } from '@/hooks/use-email';
 import { formatNumber } from '@/utils/format';
 
 const PAGE_SIZE = 50;
 const INHERIT = '__inherit__';
+
+function isActiveStatus(status: string): boolean {
+  return status === 'running' || status === 'queued' || status === 'stopping';
+}
+
+const EMAIL_STATUS_OPTIONS = [
+  { value: 'all', label: 'All statuses' },
+  { value: 'Valid', label: 'Valid' },
+  { value: 'Risky', label: 'Risky' },
+  { value: 'Invalid', label: 'Invalid' },
+  { value: 'Unverified', label: 'Unverified' },
+  { value: 'Unknown', label: 'Unknown' },
+] as const;
 
 /**
  * Compose and send a preset to selected leads.
@@ -49,17 +77,17 @@ const INHERIT = '__inherit__';
  * `LastContactedAt`, set by every successful send) are hidden by default via
  * `hasBeenContacted=false`, so re-running this page doesn't re-select someone
  * already contacted and waste a send against the daily cap.
+ *
+ * Runs as a queued, polled batch — not a single blocking request — because a
+ * paced sequential send (`SmtpOptions.DelayBetweenSendsMs` apart) to more than
+ * a handful of recipients cannot reliably finish inside the Next.js proxy's
+ * timeout (a standard Netlify Function, ~10-26s; confirmed live as a 504).
+ * Same shape `LinkedInEnrichmentView` already uses for the same problem:
+ * start, then poll a job snapshot until it reaches a terminal status.
  */
-const EMAIL_STATUS_OPTIONS = [
-  { value: 'all', label: 'All statuses' },
-  { value: 'Valid', label: 'Valid' },
-  { value: 'Risky', label: 'Risky' },
-  { value: 'Invalid', label: 'Invalid' },
-  { value: 'Unverified', label: 'Unverified' },
-  { value: 'Unknown', label: 'Unknown' },
-] as const;
-
 export function EmailComposeView() {
+  const queryClient = useQueryClient();
+
   const [search, setSearch] = React.useState('');
   const [hideContacted, setHideContacted] = React.useState(true);
   const [emailStatusFilter, setEmailStatusFilter] = React.useState<string>('Valid');
@@ -67,6 +95,25 @@ export function EmailComposeView() {
   const [signatureId, setSignatureId] = React.useState<string>(INHERIT);
   const [selected, setSelected] = React.useState<Set<string>>(new Set());
   const [preview, setPreview] = React.useState<EmailPreview | null>(null);
+
+  const [startedJobId, setStartedJobId] = React.useState<string | null>(null);
+  const [dismissed, setDismissed] = React.useState(false);
+
+  const startJob = useStartEmailSendJob();
+  const jobCommand = useEmailSendJobCommand();
+
+  // Reconnect to a batch already in progress (e.g. after a page reload), the
+  // same way LinkedInEnrichmentView adopts an active batch.
+  const activeJobs = useActiveEmailSendJobs();
+  const adoptedJobId = React.useMemo(() => {
+    if (startedJobId || dismissed) return null;
+    return activeJobs.data?.find((j) => isActiveStatus(j.status))?.id ?? null;
+  }, [startedJobId, dismissed, activeJobs.data]);
+
+  const jobId = startedJobId ?? adoptedJobId;
+  const { job, error: pollError, reset } = useEmailSendJobPoll(jobId);
+
+  const isActive = job !== null && isActiveStatus(job.status);
 
   const debouncedSearch = useDebouncedValue(search, 350);
 
@@ -89,7 +136,6 @@ export function EmailComposeView() {
 
   const templates = useEmailTemplates(true);
   const signatures = useEmailSignatures();
-  const sendEmail = useSendEmail();
   const previewEmail = useEmailPreview();
 
   const rows = leads.data?.items ?? [];
@@ -115,6 +161,35 @@ export function EmailComposeView() {
     });
   };
 
+  // Refresh the database views once a batch finishes so counts stay accurate.
+  const previousStatus = React.useRef<string | null>(null);
+  React.useEffect(() => {
+    if (!job) return;
+    if (previousStatus.current === job.status) return;
+    previousStatus.current = job.status;
+
+    if (job.status === 'completed' || job.status === 'stopped' || job.status === 'failed') {
+      void queryClient.invalidateQueries({ queryKey: ['leads'] });
+      void queryClient.invalidateQueries({ queryKey: ['email', 'log'] });
+      void queryClient.invalidateQueries({ queryKey: ['email', 'stats'] });
+
+      if (job.status === 'completed') {
+        const failed = job.counters.failed;
+        if (failed > 0) {
+          toast.warning(
+            `${job.counters.sent} sent, ${failed} failed, ${job.counters.skipped} skipped.`,
+          );
+        } else {
+          toast.success(`Sent ${job.counters.sent} email(s).`);
+        }
+      } else if (job.status === 'failed') {
+        toast.error(job.error ?? 'The send failed.');
+      } else {
+        toast.info(`Stopped — ${job.counters.sent} email(s) sent so far.`);
+      }
+    }
+  }, [job, queryClient]);
+
   const handlePreview = (): void => {
     if (!templateId) return;
 
@@ -134,7 +209,7 @@ export function EmailComposeView() {
   const handleSend = (dryRun: boolean): void => {
     if (!templateId || selected.size === 0) return;
 
-    sendEmail.mutate(
+    startJob.mutate(
       {
         templateId,
         businessIds: [...selected],
@@ -142,24 +217,30 @@ export function EmailComposeView() {
         dryRun,
       },
       {
-        onSuccess: (result) => {
-          if (result.failed > 0) {
-            toast.warning(
-              `${result.sent} sent, ${result.failed} failed, ${result.skipped} skipped.`,
-            );
-          } else {
-            toast.success(
-              dryRun
-                ? `Dry run rendered ${result.sent} message(s) — nothing delivered.`
-                : `Sent ${result.sent} email(s).`,
-            );
-          }
-
-          if (!dryRun && result.failed === 0) setSelected(new Set());
+        onSuccess: (snapshot) => {
+          setDismissed(false);
+          setStartedJobId(snapshot.id);
+          setSelected(new Set());
+          toast.success(dryRun ? 'Dry run started.' : 'Sending started.');
         },
         onError: (error) => toast.error(error.message),
       },
     );
+  };
+
+  const handleStop = (): void => {
+    if (!jobId) return;
+
+    jobCommand.mutate(
+      { jobId, command: 'stop' },
+      { onError: (error) => toast.error(error.message) },
+    );
+  };
+
+  const handleNewBatch = (): void => {
+    setStartedJobId(null);
+    setDismissed(true);
+    reset();
   };
 
   const noTemplates = templates.isSuccess && (templates.data?.length ?? 0) === 0;
@@ -169,6 +250,14 @@ export function EmailComposeView() {
       <PageHeader
         title="Send email"
         description="Email your leads using a preset approved by an administrator."
+        actions={
+          job && !isActive ? (
+            <Button variant="outline" onClick={handleNewBatch}>
+              <Plus />
+              New batch
+            </Button>
+          ) : undefined
+        }
       />
 
       {noTemplates && (
@@ -181,225 +270,315 @@ export function EmailComposeView() {
         </Alert>
       )}
 
-      <div className="grid gap-6 lg:grid-cols-[minmax(0,1.5fr)_minmax(0,1fr)]">
-        <Card>
-          <CardHeader>
-            <CardTitle>Recipients</CardTitle>
-            <CardDescription>
-              Only your leads that have an email address are listed.
-            </CardDescription>
-          </CardHeader>
-          <CardContent className="space-y-4">
-            <div className="relative">
-              <Search className="pointer-events-none absolute left-2.5 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
-              <Input
-                value={search}
-                onChange={(event) => setSearch(event.target.value)}
-                placeholder="Search your leads…"
-                className="pl-8"
-                aria-label="Search leads"
-              />
-            </div>
+      {job ? (
+        <div className="grid gap-6 lg:grid-cols-[minmax(0,1.5fr)_minmax(0,1fr)]">
+          <Card>
+            <CardHeader>
+              <CardTitle>{isActive ? 'Sending' : 'Last batch'}</CardTitle>
+              <CardDescription>
+                {job.currentTask || (isActive ? 'Working…' : 'Finished.')}
+              </CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-4">
+              <Progress value={job.percent} />
+              <p className="text-sm text-muted-foreground">
+                {job.counters.processedLeads} / {job.counters.totalLeads} recipients processed ·{' '}
+                {job.counters.sent} sent
+                {job.counters.failed > 0 ? ` · ${job.counters.failed} failed` : ''}
+                {job.counters.skipped > 0 ? ` · ${job.counters.skipped} skipped` : ''}
+              </p>
 
-            <div className="flex flex-wrap items-center justify-between gap-3">
-              <label className="flex cursor-pointer items-center gap-2 text-sm text-muted-foreground">
-                <Checkbox
-                  checked={hideContacted}
-                  onCheckedChange={(value) => setHideContacted(value === true)}
+              {pollError && (
+                <Alert variant="warning">
+                  <AlertTriangle />
+                  <AlertDescription>
+                    Lost touch with the server ({pollError}) — still retrying. The batch keeps
+                    sending either way.
+                  </AlertDescription>
+                </Alert>
+              )}
+
+              {job.status === 'failed' && job.error && (
+                <Alert variant="destructive">
+                  <XCircle />
+                  <AlertDescription>{job.error}</AlertDescription>
+                </Alert>
+              )}
+
+              {job.outcomes.length > 0 && (
+                <ul className="scrollbar-thin max-h-[22rem] space-y-1 overflow-y-auto pr-1">
+                  {job.outcomes.map((outcome) => (
+                    <li
+                      key={outcome.businessId}
+                      className="flex items-center gap-2 rounded-lg border border-border p-2.5 text-sm"
+                    >
+                      {outcome.status === 'failed' ? (
+                        <XCircle className="size-4 shrink-0 text-destructive" />
+                      ) : outcome.status === 'skipped' ? (
+                        <AlertTriangle className="size-4 shrink-0 text-warning" />
+                      ) : (
+                        <CheckCircle2 className="size-4 shrink-0 text-success" />
+                      )}
+                      <span className="min-w-0 flex-1 truncate font-medium">{outcome.toEmail || '(no address)'}</span>
+                      <span className="shrink-0 text-xs text-muted-foreground">
+                        {outcome.error ?? outcome.status}
+                      </span>
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </CardContent>
+          </Card>
+
+          <Card className="h-fit">
+            <CardHeader>
+              <CardTitle>Status</CardTitle>
+            </CardHeader>
+            <CardContent className="space-y-4">
+              <Badge variant={isActive ? 'default' : job.status === 'completed' ? 'success' : 'muted'}>
+                {job.status}
+              </Badge>
+
+              {isActive && (
+                <Button
+                  variant="destructive"
+                  className="w-full"
+                  onClick={handleStop}
+                  loading={jobCommand.isPending}
+                >
+                  Stop
+                </Button>
+              )}
+
+              <p className="text-xs text-muted-foreground">
+                Runs in the background — you can navigate away and come back; the batch keeps
+                sending either way. Every message is recorded in Email History as it goes.
+              </p>
+            </CardContent>
+          </Card>
+        </div>
+      ) : (
+        <div className="grid gap-6 lg:grid-cols-[minmax(0,1.5fr)_minmax(0,1fr)]">
+          <Card>
+            <CardHeader>
+              <CardTitle>Recipients</CardTitle>
+              <CardDescription>
+                Only your leads that have an email address are listed.
+              </CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-4">
+              <div className="relative">
+                <Search className="pointer-events-none absolute left-2.5 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
+                <Input
+                  value={search}
+                  onChange={(event) => setSearch(event.target.value)}
+                  placeholder="Search your leads…"
+                  className="pl-8"
+                  aria-label="Search leads"
                 />
-                Hide leads already emailed
-              </label>
+              </div>
 
-              <div className="flex items-center gap-2">
-                <Label htmlFor="emailStatusFilter" className="text-xs text-muted-foreground">
-                  Status
-                </Label>
-                <Select value={emailStatusFilter} onValueChange={setEmailStatusFilter}>
-                  <SelectTrigger id="emailStatusFilter" className="h-8 w-[140px] text-xs">
+              <div className="flex flex-wrap items-center justify-between gap-3">
+                <label className="flex cursor-pointer items-center gap-2 text-sm text-muted-foreground">
+                  <Checkbox
+                    checked={hideContacted}
+                    onCheckedChange={(value) => setHideContacted(value === true)}
+                  />
+                  Hide leads already emailed
+                </label>
+
+                <div className="flex items-center gap-2">
+                  <Label htmlFor="emailStatusFilter" className="text-xs text-muted-foreground">
+                    Status
+                  </Label>
+                  <Select value={emailStatusFilter} onValueChange={setEmailStatusFilter}>
+                    <SelectTrigger id="emailStatusFilter" className="h-8 w-[140px] text-xs">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {EMAIL_STATUS_OPTIONS.map((option) => (
+                        <SelectItem key={option.value} value={option.value}>
+                          {option.label}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+              </div>
+
+              {leads.isPending ? (
+                <div className="space-y-2">
+                  {Array.from({ length: 6 }, (_, index) => (
+                    <Skeleton key={index} className="h-12 w-full" />
+                  ))}
+                </div>
+              ) : rows.length === 0 ? (
+                <EmptyState
+                  icon={<Mail />}
+                  title={
+                    emailStatusFilter !== 'all'
+                      ? `No ${emailStatusFilter.toLowerCase()} leads`
+                      : hideContacted
+                        ? 'Nothing left to email'
+                        : 'No emailable leads'
+                  }
+                  description={
+                    emailStatusFilter !== 'all'
+                      ? `No leads currently have a "${emailStatusFilter}" email status. Try "All statuses" instead.`
+                      : hideContacted
+                        ? 'Every lead with an email address has already been sent this. Uncheck "Hide leads already emailed" to see them.'
+                        : 'Run a search with contact enrichment on to collect email addresses.'
+                  }
+                />
+              ) : (
+                <>
+                  <label className="flex cursor-pointer items-center gap-2 text-sm">
+                    <Checkbox checked={allSelected} onCheckedChange={toggleAll} />
+                    Select all {rows.length} shown
+                  </label>
+
+                  <ul className="scrollbar-thin max-h-[26rem] space-y-1 overflow-y-auto pr-1">
+                    {rows.map((row) => (
+                      <li key={row.id}>
+                        <label className="flex cursor-pointer items-start gap-2 rounded-lg border border-border p-2.5 hover:bg-accent/50">
+                          <Checkbox
+                            checked={selected.has(row.id)}
+                            onCheckedChange={() => toggle(row.id)}
+                            className="mt-0.5"
+                          />
+                          <span className="min-w-0 flex-1">
+                            <span className="block truncate text-sm font-medium">{row.name}</span>
+                            <span className="block truncate text-xs text-success">{row.email}</span>
+                            <span className="block truncate text-xs text-muted-foreground">
+                              {[row.category, row.city].filter(Boolean).join(' · ')}
+                            </span>
+                          </span>
+                          {row.emailStatus && (
+                            <Badge
+                              variant={row.emailStatus === 'Valid' ? 'success' : 'muted'}
+                              className="shrink-0"
+                            >
+                              {row.emailStatus}
+                            </Badge>
+                          )}
+                        </label>
+                      </li>
+                    ))}
+                  </ul>
+
+                  <p className="text-xs text-muted-foreground">
+                    Showing the {formatNumber(rows.length)} most recent of{' '}
+                    {formatNumber(leads.data?.total ?? 0)}. Narrow with search to reach the rest.
+                  </p>
+                </>
+              )}
+            </CardContent>
+          </Card>
+
+          <Card className="h-fit">
+            <CardHeader>
+              <CardTitle>Message</CardTitle>
+              <CardDescription>
+                Presets are authored by an administrator. Placeholders fill in per recipient.
+              </CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-5">
+              <div className="space-y-2">
+                <Label htmlFor="template">Preset</Label>
+                <Select value={templateId} onValueChange={setTemplateId}>
+                  <SelectTrigger id="template">
+                    <SelectValue placeholder="Choose a preset" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {(templates.data ?? []).map((template) => (
+                      <SelectItem key={template.id} value={template.id}>
+                        {template.name}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+                {activeTemplate?.description && (
+                  <p className="text-xs text-muted-foreground">{activeTemplate.description}</p>
+                )}
+              </div>
+
+              {activeTemplate && (
+                <div className="rounded-lg border border-border bg-muted/40 p-3">
+                  <p className="text-xs uppercase tracking-wide text-muted-foreground">Subject</p>
+                  <p className="mt-0.5 break-words text-sm font-medium">{activeTemplate.subject}</p>
+                </div>
+              )}
+
+              <div className="space-y-2">
+                <Label htmlFor="signature">Signature</Label>
+                <Select value={signatureId} onValueChange={setSignatureId}>
+                  <SelectTrigger id="signature">
                     <SelectValue />
                   </SelectTrigger>
                   <SelectContent>
-                    {EMAIL_STATUS_OPTIONS.map((option) => (
-                      <SelectItem key={option.value} value={option.value}>
-                        {option.label}
+                    <SelectItem value={INHERIT}>
+                      Use the preset&apos;s signature
+                      {activeTemplate?.signatureName ? ` (${activeTemplate.signatureName})` : ''}
+                    </SelectItem>
+                    {(signatures.data ?? []).map((signature) => (
+                      <SelectItem key={signature.id} value={signature.id}>
+                        {signature.name}
+                        {signature.isDefault ? ' — default' : ''}
                       </SelectItem>
                     ))}
                   </SelectContent>
                 </Select>
               </div>
-            </div>
 
-            {leads.isPending ? (
+              <Separator />
+
+              <div className="rounded-lg bg-muted/40 p-3 text-sm">
+                <span className="font-medium tabular-nums">{selected.size}</span> recipient(s)
+                selected
+              </div>
+
               <div className="space-y-2">
-                {Array.from({ length: 6 }, (_, index) => (
-                  <Skeleton key={index} className="h-12 w-full" />
-                ))}
-              </div>
-            ) : rows.length === 0 ? (
-              <EmptyState
-                icon={<Mail />}
-                title={
-                  emailStatusFilter !== 'all'
-                    ? `No ${emailStatusFilter.toLowerCase()} leads`
-                    : hideContacted
-                      ? 'Nothing left to email'
-                      : 'No emailable leads'
-                }
-                description={
-                  emailStatusFilter !== 'all'
-                    ? `No leads currently have a "${emailStatusFilter}" email status. Try "All statuses" instead.`
-                    : hideContacted
-                      ? 'Every lead with an email address has already been sent this. Uncheck "Hide leads already emailed" to see them.'
-                      : 'Run a search with contact enrichment on to collect email addresses.'
-                }
-              />
-            ) : (
-              <>
-                <label className="flex cursor-pointer items-center gap-2 text-sm">
-                  <Checkbox checked={allSelected} onCheckedChange={toggleAll} />
-                  Select all {rows.length} shown
-                </label>
-
-                <ul className="scrollbar-thin max-h-[26rem] space-y-1 overflow-y-auto pr-1">
-                  {rows.map((row) => (
-                    <li key={row.id}>
-                      <label className="flex cursor-pointer items-start gap-2 rounded-lg border border-border p-2.5 hover:bg-accent/50">
-                        <Checkbox
-                          checked={selected.has(row.id)}
-                          onCheckedChange={() => toggle(row.id)}
-                          className="mt-0.5"
-                        />
-                        <span className="min-w-0 flex-1">
-                          <span className="block truncate text-sm font-medium">{row.name}</span>
-                          <span className="block truncate text-xs text-success">{row.email}</span>
-                          <span className="block truncate text-xs text-muted-foreground">
-                            {[row.category, row.city].filter(Boolean).join(' · ')}
-                          </span>
-                        </span>
-                        {row.emailStatus && (
-                          <Badge
-                            variant={row.emailStatus === 'Valid' ? 'success' : 'muted'}
-                            className="shrink-0"
-                          >
-                            {row.emailStatus}
-                          </Badge>
-                        )}
-                      </label>
-                    </li>
-                  ))}
-                </ul>
-
-                <p className="text-xs text-muted-foreground">
-                  Showing the {formatNumber(rows.length)} most recent of{' '}
-                  {formatNumber(leads.data?.total ?? 0)}. Narrow with search to reach the rest.
-                </p>
-              </>
-            )}
-          </CardContent>
-        </Card>
-
-        <Card className="h-fit">
-          <CardHeader>
-            <CardTitle>Message</CardTitle>
-            <CardDescription>
-              Presets are authored by an administrator. Placeholders fill in per recipient.
-            </CardDescription>
-          </CardHeader>
-          <CardContent className="space-y-5">
-            <div className="space-y-2">
-              <Label htmlFor="template">Preset</Label>
-              <Select value={templateId} onValueChange={setTemplateId}>
-                <SelectTrigger id="template">
-                  <SelectValue placeholder="Choose a preset" />
-                </SelectTrigger>
-                <SelectContent>
-                  {(templates.data ?? []).map((template) => (
-                    <SelectItem key={template.id} value={template.id}>
-                      {template.name}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-              {activeTemplate?.description && (
-                <p className="text-xs text-muted-foreground">{activeTemplate.description}</p>
-              )}
-            </div>
-
-            {activeTemplate && (
-              <div className="rounded-lg border border-border bg-muted/40 p-3">
-                <p className="text-xs uppercase tracking-wide text-muted-foreground">Subject</p>
-                <p className="mt-0.5 break-words text-sm font-medium">{activeTemplate.subject}</p>
-              </div>
-            )}
-
-            <div className="space-y-2">
-              <Label htmlFor="signature">Signature</Label>
-              <Select value={signatureId} onValueChange={setSignatureId}>
-                <SelectTrigger id="signature">
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value={INHERIT}>
-                    Use the preset&apos;s signature
-                    {activeTemplate?.signatureName ? ` (${activeTemplate.signatureName})` : ''}
-                  </SelectItem>
-                  {(signatures.data ?? []).map((signature) => (
-                    <SelectItem key={signature.id} value={signature.id}>
-                      {signature.name}
-                      {signature.isDefault ? ' — default' : ''}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            </div>
-
-            <Separator />
-
-            <div className="rounded-lg bg-muted/40 p-3 text-sm">
-              <span className="font-medium tabular-nums">{selected.size}</span> recipient(s)
-              selected
-            </div>
-
-            <div className="space-y-2">
-              <Button
-                className="w-full"
-                onClick={() => handleSend(false)}
-                loading={sendEmail.isPending}
-                disabled={!templateId || selected.size === 0}
-              >
-                <Send />
-                Send to {selected.size || 0} lead(s)
-              </Button>
-
-              <div className="grid grid-cols-2 gap-2">
                 <Button
-                  variant="outline"
-                  onClick={handlePreview}
-                  loading={previewEmail.isPending}
-                  disabled={!templateId}
-                >
-                  <Eye />
-                  Preview
-                </Button>
-                <Button
-                  variant="outline"
-                  onClick={() => handleSend(true)}
-                  loading={sendEmail.isPending}
+                  className="w-full"
+                  onClick={() => handleSend(false)}
+                  loading={startJob.isPending}
                   disabled={!templateId || selected.size === 0}
-                  title="Renders and logs every message without delivering it"
                 >
-                  Dry run
+                  <Send />
+                  Send to {selected.size || 0} lead(s)
                 </Button>
-              </div>
-            </div>
 
-            <p className="text-xs text-muted-foreground">
-              Sends are paced and capped per day to protect sender reputation, and every message is
-              recorded in Email History.
-            </p>
-          </CardContent>
-        </Card>
-      </div>
+                <div className="grid grid-cols-2 gap-2">
+                  <Button
+                    variant="outline"
+                    onClick={handlePreview}
+                    loading={previewEmail.isPending}
+                    disabled={!templateId}
+                  >
+                    <Eye />
+                    Preview
+                  </Button>
+                  <Button
+                    variant="outline"
+                    onClick={() => handleSend(true)}
+                    loading={startJob.isPending}
+                    disabled={!templateId || selected.size === 0}
+                    title="Renders and logs every message without delivering it"
+                  >
+                    Dry run
+                  </Button>
+                </div>
+              </div>
+
+              <p className="text-xs text-muted-foreground">
+                Runs in the background — you can navigate away and come back. Sends are paced and
+                capped per day to protect sender reputation, and every message is recorded in
+                Email History.
+              </p>
+            </CardContent>
+          </Card>
+        </div>
+      )}
 
       <Dialog open={preview !== null} onOpenChange={(open) => !open && setPreview(null)}>
         <DialogContent className="max-w-2xl">

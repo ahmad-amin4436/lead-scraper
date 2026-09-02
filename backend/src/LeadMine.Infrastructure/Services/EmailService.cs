@@ -30,6 +30,25 @@ public sealed class EmailService(
             return Result<SendEmailResultDto>.Unauthorized();
         }
 
+        return await SendCoreAsync(
+            senderId, currentUser.Email, currentUser.HasPermission(Permissions.Leads.ViewAll), request, ct);
+    }
+
+    public Task<Result<SendEmailResultDto>> SendAsBackgroundJobAsync(
+        Guid senderId,
+        string? senderEmail,
+        bool canViewAllLeads,
+        SendEmailRequest request,
+        CancellationToken ct = default) =>
+        SendCoreAsync(senderId, senderEmail, canViewAllLeads, request, ct);
+
+    private async Task<Result<SendEmailResultDto>> SendCoreAsync(
+        Guid senderId,
+        string? senderEmailOverride,
+        bool canViewAllLeads,
+        SendEmailRequest request,
+        CancellationToken ct)
+    {
         if (!sender.IsConfigured)
         {
             return Result<SendEmailResultDto>.Failure(
@@ -59,14 +78,14 @@ public sealed class EmailService(
 
         // Only leads the caller may see: scoping here stops a user emailing
         // another user's pipeline by passing their lead ids.
-        var leads = await ScopedLeads()
+        var leads = await ScopedLeads(senderId, canViewAllLeads)
             .Where(b => request.BusinessIds.Contains(b.Id))
             .ToListAsync(ct);
 
         var signature = await ResolveSignatureAsync(request.SignatureId ?? template.SignatureId, senderId, ct);
 
-        var senderName = currentUser.Email ?? _smtp.FromName;
-        var senderEmail = currentUser.Email ?? _smtp.EffectiveFrom;
+        var senderName = senderEmailOverride ?? _smtp.FromName;
+        var senderEmail = senderEmailOverride ?? _smtp.EffectiveFrom;
 
         var result = new SendEmailResultDto { Requested = request.BusinessIds.Count };
 
@@ -184,7 +203,8 @@ public sealed class EmailService(
         Business? lead = null;
         if (request.BusinessId.HasValue)
         {
-            lead = await ScopedLeads().FirstOrDefaultAsync(b => b.Id == request.BusinessId.Value, ct);
+            lead = await ScopedLeads(currentUser.UserId, currentUser.HasPermission(Permissions.Leads.ViewAll))
+                .FirstOrDefaultAsync(b => b.Id == request.BusinessId.Value, ct);
         }
 
         var senderName = currentUser.Email ?? _smtp.FromName;
@@ -339,14 +359,19 @@ public sealed class EmailService(
             : Result.Failure(outcome.Error ?? "Could not connect to the SMTP server.");
     }
 
-    /// <summary>Leads visible to the caller — mirrors BusinessService scoping.</summary>
-    private IQueryable<Business> ScopedLeads()
+    /// <summary>
+    /// Leads visible to the caller — mirrors BusinessService scoping. Takes the
+    /// caller explicitly (rather than reading ICurrentUser internally) so
+    /// EmailSendRunner, a background job with no HTTP request behind it, can
+    /// call this the same way the interactive path does.
+    /// </summary>
+    private IQueryable<Business> ScopedLeads(Guid? userId, bool canViewAll)
     {
         var query = db.Businesses.AsQueryable();
 
-        if (currentUser.HasPermission(Permissions.Leads.ViewAll)) return query;
+        if (canViewAll) return query;
 
-        var me = currentUser.UserId;
+        var me = userId;
         return query.Where(b => b.OwnerUserId == me);
     }
 

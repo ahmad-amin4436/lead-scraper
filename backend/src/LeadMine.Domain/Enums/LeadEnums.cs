@@ -75,7 +75,7 @@ public enum SearchJobStatus
 
 /// <summary>
 /// What a queued <see cref="Entities.SearchJob"/> actually runs — one shared
-/// queue/lease/checkpoint mechanism serves both, dispatched by
+/// queue/lease/checkpoint mechanism serves all of them, dispatched by
 /// <c>ScraperWorkerService</c> to a different runner per kind.
 /// </summary>
 public enum JobKind
@@ -103,6 +103,18 @@ public enum JobKind
     /// own People tab does not have that restriction.
     /// </summary>
     LinkedInPeopleSearch = 2,
+
+    /// <summary>
+    /// A preset email batch to a fixed list of leads, run by
+    /// <c>EmailSendRunner</c>. Exists for the same reason as
+    /// <see cref="LinkedInEnrichment"/>: the synchronous version — one HTTP
+    /// request sending to every selected recipient inline, each paced
+    /// <c>SmtpOptions.DelayBetweenSendsMs</c> apart — structurally cannot
+    /// finish inside a standard Netlify Function's ~10-26s ceiling once more
+    /// than a handful of recipients are selected. Confirmed live: a real send
+    /// returned <c>504</c> from <c>/api/backend/email/send</c>.
+    /// </summary>
+    EmailSend = 3,
 }
 
 public enum ActivityLogLevel

@@ -1,10 +1,13 @@
+using System.Text.Json;
 using LeadMine.Application.Authorization;
 using LeadMine.Application.Common;
 using LeadMine.Application.DTOs;
 using LeadMine.Application.Interfaces;
+using LeadMine.Domain.Enums;
 using LeadMine.Infrastructure.Authorization;
 using LeadMine.Infrastructure.Email;
 using LeadMine.Infrastructure.Scraping.Verification;
+using LeadMine.Infrastructure.Services;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 
@@ -13,11 +16,21 @@ namespace LeadMine.Api.Controllers;
 /// <summary>Sending mail to leads, and the history of what was sent.</summary>
 [Authorize]
 [Route("api/email")]
-public sealed class EmailController(IEmailService email, EmailValidationPipeline validation) : ApiControllerBase
+public sealed class EmailController(
+    IEmailService email,
+    EmailValidationPipeline validation,
+    ISearchJobService jobs,
+    ICurrentUser currentUser) : ApiControllerBase
 {
     /// <summary>
-    /// Sends an approved preset to one or more leads. Recipients are resolved
-    /// server-side from the lead records the caller is allowed to see.
+    /// Sends an approved preset to one or more leads, synchronously, inline in
+    /// this request. Kept for callers that genuinely want to block on a tiny
+    /// batch, but the frontend no longer calls this — see the
+    /// <c>send-jobs</c> endpoints below. Confirmed live: this blocking form
+    /// returned <c>504</c> from the Next.js proxy (a standard Netlify
+    /// Function, ~10-26s) once a real batch's paced sequential sends ran long
+    /// enough, the same class of problem <c>enrich-jobs</c> already solved
+    /// for LinkedIn enrichment.
     /// </summary>
     [HttpPost("send")]
     [HasPermission(Permissions.Email.Send)]
@@ -25,6 +38,50 @@ public sealed class EmailController(IEmailService email, EmailValidationPipeline
     [ProducesResponseType(StatusCodes.Status400BadRequest)]
     public async Task<ActionResult<SendEmailResultDto>> Send(SendEmailRequest request, CancellationToken ct)
         => FromResult(await email.SendAsync(request, ct));
+
+    /// <summary>Queues a send batch. Returns immediately — a worker executes it. This is what the frontend uses.</summary>
+    [HttpPost("send-jobs")]
+    [HasPermission(Permissions.Email.Send)]
+    [ProducesResponseType(typeof(SearchJobDto), StatusCodes.Status202Accepted)]
+    [ProducesResponseType(StatusCodes.Status400BadRequest)]
+    [ProducesResponseType(StatusCodes.Status409Conflict)]
+    public async Task<ActionResult<SearchJobDto>> CreateSendJob(SendEmailRequest request, CancellationToken ct)
+    {
+        if (currentUser.UserId is null) return Unauthorized();
+
+        var result = await jobs.CreateAsync(new CreateSearchJobRequest
+        {
+            Kind = JobKind.EmailSend,
+            RequestJson = JsonSerializer.Serialize(request),
+            TotalTasks = request.BusinessIds.Count,
+        }, ct);
+
+        if (!result.Succeeded) return Problem(result);
+
+        return Accepted(result.Value);
+    }
+
+    /// <summary>The live snapshot the Send Email page polls.</summary>
+    [HttpGet("send-jobs/{id:guid}")]
+    [HasPermission(Permissions.Email.Send)]
+    [ProducesResponseType(typeof(SearchJobDto), StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status404NotFound)]
+    public async Task<ActionResult<SearchJobDto>> GetSendJob(Guid id, CancellationToken ct)
+        => FromResult(await jobs.GetByIdAsync(id, ct));
+
+    /// <summary>Runs that are queued, running or stopping — the caller's own.</summary>
+    [HttpGet("send-jobs/active")]
+    [HasPermission(Permissions.Email.Send)]
+    [ProducesResponseType(typeof(IReadOnlyList<SearchJobDto>), StatusCodes.Status200OK)]
+    public async Task<ActionResult<IReadOnlyList<SearchJobDto>>> GetActiveSendJobs(CancellationToken ct)
+        => Ok(await jobs.GetActiveAsync(JobKind.EmailSend, ct));
+
+    /// <summary>Asks a batch to stop. A live worker notices at its next checkpoint.</summary>
+    [HttpPost("send-jobs/{id:guid}/stop")]
+    [HasPermission(Permissions.Email.Send)]
+    [ProducesResponseType(typeof(SearchJobDto), StatusCodes.Status200OK)]
+    public async Task<ActionResult<SearchJobDto>> StopSendJob(Guid id, CancellationToken ct)
+        => FromResult(await jobs.RequestStopAsync(id, ct));
 
     /// <summary>Renders a preset against a lead without sending it.</summary>
     [HttpPost("preview")]

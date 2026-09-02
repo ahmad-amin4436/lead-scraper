@@ -9,7 +9,10 @@ import {
 } from '@tanstack/react-query';
 
 import { apiFetch, buildQueryString } from '@/lib/api-client';
+import { toEmailSendJobSnapshot } from '@/lib/backend/email-send-job-mapper';
+import type { BackendSearchJob } from '@/lib/backend/search-mapper';
 import type { BackendPagedResult } from '@/lib/backend/types';
+import type { EmailSendJobSnapshot } from '@/types/email-send-job';
 
 // --- shapes mirroring the .NET DTOs ----------------------------------------
 
@@ -189,6 +192,55 @@ export function useSendEmail(): UseMutationResult<SendEmailResult, Error, SendEm
       void client.invalidateQueries({ queryKey: ['email', 'stats'] });
       void client.invalidateQueries({ queryKey: ['leads'] });
     },
+  });
+}
+
+// --- sending as a background job (what the Send Email page actually uses) --
+// useSendEmail above blocks on the whole batch inline and can 504 through the
+// Next.js proxy (a standard Netlify Function, ~10-26s) once paced sequential
+// sends run long — confirmed live. This queues the batch instead and polls
+// it, the same fire-and-forget-then-poll shape LinkedIn enrichment uses.
+
+const emailSendJobKeys = {
+  active: ['email-send-jobs'] as const,
+};
+
+export function useStartEmailSendJob(): UseMutationResult<EmailSendJobSnapshot, Error, SendEmailInput> {
+  const client = useQueryClient();
+
+  return useMutation({
+    mutationFn: (input) =>
+      apiFetch<BackendSearchJob>('/api/backend/email/send-jobs', {
+        method: 'POST',
+        body: JSON.stringify(input),
+      }).then(toEmailSendJobSnapshot),
+    onSuccess: () => {
+      void client.invalidateQueries({ queryKey: emailSendJobKeys.active });
+    },
+  });
+}
+
+/** Batches that are queued, running or stopping — the caller's own. */
+export function useActiveEmailSendJobs(): UseQueryResult<EmailSendJobSnapshot[]> {
+  return useQuery({
+    queryKey: emailSendJobKeys.active,
+    queryFn: () =>
+      apiFetch<BackendSearchJob[]>('/api/backend/email/send-jobs/active').then((jobs) =>
+        jobs.map(toEmailSendJobSnapshot),
+      ),
+  });
+}
+
+export function useEmailSendJobCommand(): UseMutationResult<
+  EmailSendJobSnapshot,
+  Error,
+  { jobId: string; command: 'stop' }
+> {
+  return useMutation({
+    mutationFn: ({ jobId }) =>
+      apiFetch<BackendSearchJob>(`/api/backend/email/send-jobs/${jobId}/stop`, {
+        method: 'POST',
+      }).then(toEmailSendJobSnapshot),
   });
 }
 
