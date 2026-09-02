@@ -45,7 +45,17 @@ public sealed class EmailValidationPipeline(
     IOptionsMonitor<EmailValidationOptions> optionsMonitor,
     ILogger<EmailValidationPipeline> logger)
 {
-    public async Task<EmailValidationOutcome?> ValidateAsync(string? email, CancellationToken ct)
+    /// <param name="email">The address to validate.</param>
+    /// <param name="forceSmtpProbe">
+    /// Overrides <see cref="EmailValidationOptions.EnableSmtpProbe"/> for this
+    /// one call — used by the on-demand <c>POST api/email/verify</c> endpoint,
+    /// where a caller explicitly asked for the strongest available signal on a
+    /// single address, as opposed to the continuous background sweep
+    /// (<see cref="EmailValidationWorkerService"/>), which must stay
+    /// conservative because it runs across the whole lead table unattended.
+    /// Null (the default) defers to the configured option, as before.
+    /// </param>
+    public async Task<EmailValidationOutcome?> ValidateAsync(string? email, CancellationToken ct, bool? forceSmtpProbe = null)
     {
         var normalized = (email ?? string.Empty).Trim().ToLowerInvariant();
         if (normalized.Length == 0) return null;
@@ -59,11 +69,12 @@ public sealed class EmailValidationPipeline(
         bool? isCatchAll = null;
 
         var options = optionsMonitor.CurrentValue;
+        var smtpProbeEnabled = forceSmtpProbe ?? options.EnableSmtpProbe;
 
         // No point probing an address DNS already ruled out, and never probe a
         // disposable domain — the mailbox may well exist, but the address is
         // still not one worth using.
-        var worthProbing = options.EnableSmtpProbe
+        var worthProbing = smtpProbeEnabled
             && status is EmailStatus.Valid or EmailStatus.Risky or EmailStatus.Unknown
             && !baseResult.IsDisposable
             && mxHosts.Count > 0;

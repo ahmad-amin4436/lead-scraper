@@ -4,6 +4,7 @@ using LeadMine.Application.DTOs;
 using LeadMine.Application.Interfaces;
 using LeadMine.Infrastructure.Authorization;
 using LeadMine.Infrastructure.Email;
+using LeadMine.Infrastructure.Scraping.Verification;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 
@@ -12,7 +13,7 @@ namespace LeadMine.Api.Controllers;
 /// <summary>Sending mail to leads, and the history of what was sent.</summary>
 [Authorize]
 [Route("api/email")]
-public sealed class EmailController(IEmailService email) : ApiControllerBase
+public sealed class EmailController(IEmailService email, EmailValidationPipeline validation) : ApiControllerBase
 {
     /// <summary>
     /// Sends an approved preset to one or more leads. Recipients are resolved
@@ -70,7 +71,69 @@ public sealed class EmailController(IEmailService email) : ApiControllerBase
     [ProducesResponseType(StatusCodes.Status200OK)]
     public ActionResult<object> Tokens() =>
         Ok(TemplateRenderer.AvailableTokens.Select(t => new { token = t.Token, description = t.Description }));
+
+    /// <summary>
+    /// Checks one address on demand and returns an immediate verdict, rather
+    /// than waiting for the next background sweep
+    /// (<c>EmailValidationWorkerService</c>) to reach it.
+    /// <para>
+    /// Always runs the SMTP probe for this one address, regardless of
+    /// <c>EmailValidation:EnableSmtpProbe</c> — a single ad-hoc lookup a caller
+    /// explicitly asked for carries none of the volume risk the background
+    /// sweep's own conservative default protects against. See
+    /// <c>EmailValidationPipeline</c>'s remarks, and the developer docs' §29,
+    /// for what "deliverable" does and does not prove: a definitive SMTP
+    /// rejection (550/551/553) is trustworthy, but Gmail, Microsoft 365 and
+    /// most large mailbox providers accept RCPT TO for addresses that do not
+    /// exist specifically to defeat this technique — for a domain hosted on
+    /// one of those, "Valid" here means "nothing rejected it", not "confirmed
+    /// to exist". A confirmed answer on those domains requires the separate,
+    /// opt-in bounce-check pass (<c>EmailBounceCheckWorkerService</c>), which
+    /// actually sends and watches for a bounce.
+    /// </para>
+    /// </summary>
+    [HttpPost("verify")]
+    [HasPermission(Permissions.Email.Send)]
+    [ProducesResponseType(typeof(VerifyEmailResponse), StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status400BadRequest)]
+    public async Task<ActionResult<VerifyEmailResponse>> Verify(VerifyEmailRequest request, CancellationToken ct)
+    {
+        if (string.IsNullOrWhiteSpace(request.Email)) return BadRequest("Email is required.");
+
+        var outcome = await validation.ValidateAsync(request.Email, ct, forceSmtpProbe: true);
+        if (outcome is null) return BadRequest("Email is required.");
+
+        return Ok(new VerifyEmailResponse(
+            outcome.Details.NormalizedEmail,
+            outcome.Status.ToString(),
+            outcome.Confidence,
+            outcome.IsDisposable,
+            outcome.IsRoleAccount,
+            outcome.IsCatchAll,
+            outcome.Details.SmtpProbeResult,
+            outcome.Details.Reason));
+    }
 }
+
+public sealed record VerifyEmailRequest(string Email);
+
+/// <param name="Email">The normalized address that was checked.</param>
+/// <param name="Status">"Valid" | "Risky" | "Invalid" | "Unknown" — see EmailStatus.</param>
+/// <param name="Confidence">0-100.</param>
+/// <param name="IsDisposable">A known throwaway-mail provider.</param>
+/// <param name="IsRoleAccount">A shared/team mailbox (info@, sales@, ...) rather than a named person.</param>
+/// <param name="IsCatchAll">Null only if the SMTP probe itself could not run (e.g. no MX, or the recipient's mail port is unreachable from this host).</param>
+/// <param name="SmtpProbeResult">"Accepted" | "Rejected" | "Inconclusive".</param>
+/// <param name="Reason">Human-readable explanation of the DNS/MX-level verdict.</param>
+public sealed record VerifyEmailResponse(
+    string Email,
+    string Status,
+    int Confidence,
+    bool IsDisposable,
+    bool IsRoleAccount,
+    bool? IsCatchAll,
+    string? SmtpProbeResult,
+    string Reason);
 
 /// <summary>Admin-managed presets and signatures.</summary>
 [Authorize]
