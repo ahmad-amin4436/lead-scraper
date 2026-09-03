@@ -275,8 +275,10 @@ public static class DependencyInjection
             .ValidateDataAnnotations();
 
         services.AddSingleton<SmtpProbe>();
+        services.AddSingleton<SmtpProbeDomainRateLimiter>();
         services.AddSingleton<EmailValidationPipeline>();
         services.AddHostedService<EmailValidationWorkerService>();
+        services.AddHostedService<EmailSmtpProbeWorkerService>();
         services.AddHostedService<EmailBounceCheckWorkerService>();
 
         // Owns the one shared Chromium process for every Playwright-backed

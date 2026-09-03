@@ -18,12 +18,20 @@ public sealed record EmailValidationDetails(
     DateTimeOffset EvaluatedAt);
 
 /// <param name="IsCatchAll">Null when the SMTP probe never ran; see <see cref="EmailValidationOptions.EnableSmtpProbe"/>.</param>
+/// <param name="ProbeAttempted">
+/// True only when the RCPT TO probe actually ran — false whenever it was
+/// skipped, for any reason (feature off, already ruled out by DNS,
+/// disposable, or the per-domain-per-hour budget was exhausted). Distinct
+/// from <paramref name="IsCatchAll"/> being null, which can also mean "ran,
+/// but the catch-all check itself came back inconclusive".
+/// </param>
 public sealed record EmailValidationOutcome(
     EmailStatus Status,
     int Confidence,
     bool IsDisposable,
     bool IsRoleAccount,
     bool? IsCatchAll,
+    bool ProbeAttempted,
     EmailValidationDetails Details)
 {
     public string DetailsJson => JsonSerializer.Serialize(Details);
@@ -42,6 +50,7 @@ public sealed record EmailValidationOutcome(
 public sealed class EmailValidationPipeline(
     EmailVerifier verifier,
     SmtpProbe smtpProbe,
+    SmtpProbeDomainRateLimiter probeRateLimiter,
     IOptionsMonitor<EmailValidationOptions> optionsMonitor,
     ILogger<EmailValidationPipeline> logger)
 {
@@ -79,6 +88,21 @@ public sealed class EmailValidationPipeline(
             && !baseResult.IsDisposable
             && mxHosts.Count > 0;
 
+        // The actual guard against hammering one mail provider. An explicit,
+        // caller-requested check (forceSmtpProbe: true — the on-demand verify
+        // endpoint) bypasses it: that's a single ad-hoc lookup, not a sweep
+        // that could repeat against the same domain many times a minute.
+        if (worthProbing && forceSmtpProbe != true)
+        {
+            var domain = ExtractDomain(normalized);
+            worthProbing = probeRateLimiter.TryAcquire(domain, options.SmtpProbeMaxPerHourPerDomain);
+        }
+
+        // Captured before the probe runs — worthProbing already reflects the
+        // rate-limit decision above, so a lead skipped for budget reasons is
+        // correctly reported as "not attempted" and stays eligible to retry.
+        var probeAttempted = worthProbing;
+
         if (worthProbing)
         {
             try
@@ -106,7 +130,8 @@ public sealed class EmailValidationPipeline(
             smtpOutcome,
             DateTimeOffset.UtcNow);
 
-        return new EmailValidationOutcome(status, confidence, baseResult.IsDisposable, baseResult.IsRoleAccount, isCatchAll, details);
+        return new EmailValidationOutcome(
+            status, confidence, baseResult.IsDisposable, baseResult.IsRoleAccount, isCatchAll, probeAttempted, details);
     }
 
     private static int BaseConfidence(EmailStatus status, bool isDisposable, bool isRoleAccount) => status switch

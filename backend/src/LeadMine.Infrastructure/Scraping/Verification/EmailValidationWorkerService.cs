@@ -9,17 +9,16 @@ namespace LeadMine.Infrastructure.Scraping.Verification;
 
 /// <summary>
 /// Continuously validates lead email addresses: normalize, syntax, DNS, MX,
-/// disposable-domain, role-account, and — if
-/// <see cref="EmailValidationOptions.EnableSmtpProbe"/> is on — catch-all
-/// detection and an RCPT TO probe, via <see cref="EmailValidationPipeline"/>.
+/// disposable-domain, role-account, via <see cref="EmailValidationPipeline"/>.
 /// <para>
 /// Wakes up every <see cref="EmailValidationOptions.PollSeconds"/> (1s by
 /// default) and claims a small batch — that cadence is safe specifically
-/// because the default pipeline is pure DNS, the same kind of query every
-/// browser makes constantly; there is no external party to overwhelm. The one
-/// step that talks to a real mail server (the SMTP probe) carries its own,
-/// much stricter per-domain-per-hour limit inside <see cref="EmailValidationPipeline"/>'s
-/// options, independent of this loop's tick rate.
+/// because this pass is pure DNS, the same kind of query every browser makes
+/// constantly; there is no external party to overwhelm. It never runs the
+/// SMTP probe, even when <see cref="EmailValidationOptions.EnableSmtpProbe"/>
+/// is on — that step talks to a real mail server and needs a much slower,
+/// rate-limited cadence, which is <see cref="EmailSmtpProbeWorkerService"/>'s
+/// job on its own schedule.
 /// </para>
 /// <para>
 /// No distributed lease the way <c>SearchJob</c> has one: this app runs as a
@@ -124,7 +123,13 @@ public sealed class EmailValidationWorkerService(
             {
                 try
                 {
-                    outcomes[i] = await pipeline.ValidateAsync(batch[i].Email, token);
+                    // Never probes here, regardless of EnableSmtpProbe — this
+                    // pass runs every second across the whole lead table, and
+                    // an RCPT TO probe at that cadence is exactly the kind of
+                    // volume EmailVerifier's own remarks warn against.
+                    // EmailSmtpProbeWorkerService owns that step, on its own
+                    // slower, rate-limited cadence.
+                    outcomes[i] = await pipeline.ValidateAsync(batch[i].Email, token, forceSmtpProbe: false);
                 }
                 catch (OperationCanceledException) when (token.IsCancellationRequested)
                 {
@@ -149,6 +154,10 @@ public sealed class EmailValidationWorkerService(
             business.EmailIsRoleAccount = outcome.IsRoleAccount;
             business.EmailIsCatchAll = outcome.IsCatchAll;
             business.EmailValidationDetailsJson = outcome.DetailsJson;
+            // Always false from this pass (forceSmtpProbe: false above), but
+            // written the same way EmailSmtpProbeWorkerService does — never
+            // clear a real probe timestamp this pass didn't set.
+            if (outcome.ProbeAttempted) business.EmailSmtpProbedAt = DateTimeOffset.UtcNow;
         }
 
         await db.SaveChangesAsync(ct);

@@ -68,6 +68,11 @@ public class BusinessConfiguration : IEntityTypeConfiguration<Business>
         // have never been validated, or were validated before some cutoff".
         builder.HasIndex(b => b.EmailValidatedAt);
 
+        // EmailSmtpProbeWorkerService's queue query: "validated, but never
+        // SMTP-probed". Filtered — most rows never get probed at all, since
+        // it's off by default.
+        builder.HasIndex(b => b.EmailSmtpProbedAt).HasFilter("[EmailSmtpProbedAt] IS NULL");
+
         // Duplicate detection: filtered so many NULLs don't bloat the index.
         builder.HasIndex(b => b.DedupeWebsiteKey).HasFilter("[DedupeWebsiteKey] IS NOT NULL");
         builder.HasIndex(b => b.DedupePhoneKey).HasFilter("[DedupePhoneKey] IS NOT NULL");

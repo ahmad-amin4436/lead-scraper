@@ -175,4 +175,14 @@ public class Business : AuditableEntity
     /// migration every time.
     /// </summary>
     public string? EmailValidationDetailsJson { get; set; }
+
+    /// <summary>
+    /// Set the moment an RCPT TO probe actually ran for this address —
+    /// distinct from <see cref="EmailIsCatchAll"/> being null, which can also
+    /// mean "probed, but the catch-all check itself was inconclusive". This is
+    /// what <c>EmailSmtpProbeWorkerService</c> uses to find leads that have
+    /// never been probed at all, so it doesn't keep re-probing (and re-billing
+    /// the per-domain-per-hour budget for) ones it already has an answer for.
+    /// </summary>
+    public DateTimeOffset? EmailSmtpProbedAt { get; set; }
 }
