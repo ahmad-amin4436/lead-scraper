@@ -251,12 +251,16 @@ public sealed class EmailBounceProcessorService(
 
         if (parsed.FinalRecipient is null) return false;
 
-        // Prefer an exact Message-Id match — the bounce's own copy of the
-        // original message (a message/rfc822 attachment, which Gmail and most
-        // providers include) pins this to one specific send even when the
-        // same address was emailed more than once. Falls back to "the most
-        // recent still-Sent log for this recipient" otherwise.
-        var originalMessageId = DsnMessageParser.TryFindOriginalMessageId(message);
+        // Prefer an exact Message-Id match — pins this to one specific send
+        // even when the same address was emailed more than once. Two
+        // sources, checked in order: the DSN's own structured field (Gmail's
+        // X-Original-Message-ID, used for its "message blocked" self-
+        // rejections, which never attach the original message at all), then
+        // a full message/rfc822 or text/rfc822-headers part elsewhere in the
+        // bounce (how most other providers, and Gmail's real bounces from a
+        // recipient's own server, include "what you sent"). Falls back to
+        // "the most recent still-Sent log for this recipient" otherwise.
+        var originalMessageId = parsed.OriginalMessageId ?? DsnMessageParser.TryFindOriginalMessageId(message);
 
         EmailLog? log = null;
         if (originalMessageId is not null)

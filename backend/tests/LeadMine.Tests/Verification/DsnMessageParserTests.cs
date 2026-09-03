@@ -1,4 +1,5 @@
 using System.Text;
+using LeadMine.Domain.Enums;
 using LeadMine.Infrastructure.Scraping.Verification;
 using MimeKit;
 
@@ -156,6 +157,43 @@ public class DsnMessageParserTests
         Assert.Null(DsnMessageParser.TryFindOriginalMessageId(message));
     }
 
+    [Fact]
+    public void TryFindOriginalMessageId_TextRfc822HeadersPart_ExtractsMessageId()
+    {
+        // Gmail's shape for its own "message blocked" self-rejection: no full
+        // message/rfc822 attachment (nothing to attach — it never left
+        // Gmail), just the original headers as text/rfc822-headers.
+        var message = LoadMessage(DsnWithRfc822HeadersPart("<abc123@leadmine.local>"));
+
+        var id = DsnMessageParser.TryFindOriginalMessageId(message);
+
+        Assert.Equal("abc123@leadmine.local", id);
+    }
+
+    // --- Gmail's real "Message blocked" shape (policy rejection, X-Original-Message-ID) --
+
+    [Fact]
+    public void TryParseStructured_GmailMessageBlocked_IsPolicyRejectionWithOriginalMessageId()
+    {
+        // The exact shape confirmed live: Status: 5.7.1, a Diagnostic-Code with
+        // no bare SMTP code at all (just prose + a support link), and the
+        // original id only in X-Original-Message-ID since nothing was attached.
+        var message = LoadMessage(GmailMessageBlockedDsn(
+            recipient: "someone@example.com",
+            originalMessageId: "<JHXERULR7UU4.YG4MCX8LC5W53@win-ng2j237qd6j>"));
+
+        var parsed = DsnMessageParser.TryParseStructured(message);
+
+        Assert.NotNull(parsed);
+        Assert.Equal("someone@example.com", parsed!.FinalRecipient);
+        Assert.Equal("5.7.1", parsed.Status);
+        Assert.Equal("JHXERULR7UU4.YG4MCX8LC5W53@win-ng2j237qd6j", parsed.OriginalMessageId);
+
+        var smtpClass = SmtpResponseClassifier.Classify(parsed.SmtpCode ?? 0, parsed.DsnCode);
+        Assert.Equal(SmtpResponseClass.PolicyRejection, smtpClass);
+        Assert.Equal(EmailBounceType.PolicyRejection, SmtpResponseClassifier.ToBounceType(smtpClass));
+    }
+
     // --- Heuristic fallback for unstructured bounces (the real Gmail "Address not found" shape) --
 
     [Fact]
@@ -301,4 +339,68 @@ public class DsnMessageParserTests
             --BOUNDARY--
             """.ReplaceLineEndings("\r\n");
     }
+
+    /// <summary>A DSN whose only trace of the original message is a bare text/rfc822-headers part (no message/delivery-status at all) — the fallback path.</summary>
+    private static string DsnWithRfc822HeadersPart(string originalMessageId) =>
+        $"""
+         From: Mail Delivery Subsystem <mailer-daemon@example.com>
+         To: sender@leadmine.local
+         Subject: Delivery Status Notification (Failure)
+         MIME-Version: 1.0
+         Content-Type: multipart/report; report-type=delivery-status; boundary="BOUNDARY"
+
+         --BOUNDARY
+         Content-Type: text/plain; charset=UTF-8
+
+         Delivery failed.
+
+         --BOUNDARY
+         Content-Type: text/rfc822-headers
+
+         From: sender@leadmine.local
+         To: recipient@example.com
+         Subject: Original message
+         Message-ID: {originalMessageId}
+
+         --BOUNDARY--
+         """.ReplaceLineEndings("\r\n");
+
+    /// <summary>
+    /// The exact shape confirmed live against a real "Message blocked" bounce
+    /// from googlemail.com: Status 5.7.1, a Diagnostic-Code that's prose plus
+    /// a support link (no bare SMTP code in it at all), and the original
+    /// Message-Id only in the per-message X-Original-Message-ID field —
+    /// nothing is attached, since the message never left Gmail's network.
+    /// </summary>
+    private static string GmailMessageBlockedDsn(string recipient, string originalMessageId) =>
+        $"""
+         From: Mail Delivery Subsystem <mailer-daemon@googlemail.com>
+         To: sender@leadmine.local
+         Subject: Delivery Status Notification (Failure)
+         MIME-Version: 1.0
+         Content-Type: multipart/report; report-type=delivery-status; boundary="BOUNDARY"
+
+         --BOUNDARY
+         Content-Type: text/plain; charset=UTF-8
+
+         ** Message blocked **
+
+         Your message to {recipient} has been blocked.
+
+         --BOUNDARY
+         Content-Type: message/delivery-status
+
+         Reporting-MTA: dns; googlemail.com
+         Received-From-MTA: dns; sender@leadmine.local
+         Arrival-Date: Thu, 03 Sep 2026 03:24:05 -0700 (PDT)
+         X-Original-Message-ID: {originalMessageId}
+
+         Final-Recipient: rfc822; {recipient}
+         Action: failed
+         Status: 5.7.1
+         Diagnostic-Code: smtp; Message rejected. For more information, go to https://support.google.com/mail/answer/69585
+         Last-Attempt-Date: Thu, 03 Sep 2026 03:24:07 -0700 (PDT)
+
+         --BOUNDARY--
+         """.ReplaceLineEndings("\r\n");
 }

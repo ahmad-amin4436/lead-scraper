@@ -17,6 +17,15 @@ namespace LeadMine.Infrastructure.Scraping.Verification;
 /// <param name="SmtpCode">The 3-digit SMTP reply code, parsed out of <see cref="DiagnosticCode"/> or <see cref="Status"/> if one could be found.</param>
 /// <param name="DsnCode">The RFC 3463 extended status code, parsed the same way.</param>
 /// <param name="IsStructured">True when this came from an actual RFC 3464 delivery-status part rather than a heuristic guess.</param>
+/// <param name="OriginalMessageId">
+/// The original send's <c>Message-Id</c>, when the DSN's own per-message
+/// fields carried one directly (Gmail's non-standard <c>X-Original-Message-ID</c>,
+/// used specifically for the "Message blocked" self-rejection case, where
+/// Gmail never attaches the full original message the way a real bounce
+/// does). Null here doesn't mean no id is findable at all — see
+/// <see cref="TryFindOriginalMessageId"/> for the other providers'
+/// embedded-message shapes.
+/// </param>
 public sealed record ParsedBounce(
     string? FinalRecipient,
     string? Action,
@@ -26,7 +35,8 @@ public sealed record ParsedBounce(
     string? Reason,
     int? SmtpCode,
     string? DsnCode,
-    bool IsStructured);
+    bool IsStructured,
+    string? OriginalMessageId = null);
 
 /// <summary>
 /// Reads bounce/DSN messages. Pure and stateless — no network, nothing to
@@ -73,7 +83,13 @@ public static class DsnMessageParser
                 continue;
             }
 
-            // StatusGroups[0] is the per-message fields; recipient groups follow.
+            // StatusGroups[0] is the per-message fields — Reporting-MTA,
+            // Arrival-Date, and (Gmail's own non-standard extension)
+            // X-Original-Message-ID when Gmail itself blocked the send before
+            // it ever reached a real recipient server, so there's no attached
+            // original message to pull a Message-Id from any other way.
+            var originalMessageId = CleanMessageId(groups.Count > 0 ? groups[0]["X-Original-Message-ID"] : null);
+
             foreach (var group in groups.Skip(1))
             {
                 var action = group["Action"];
@@ -91,7 +107,8 @@ public static class DsnMessageParser
                 var reason = diagnosticCode ?? dsnStatus;
 
                 return new ParsedBounce(
-                    cleanedRecipient, action, dsnStatus, diagnosticCode, remoteMta, reason, smtpCode, dsnCode, IsStructured: true);
+                    cleanedRecipient, action, dsnStatus, diagnosticCode, remoteMta, reason, smtpCode, dsnCode,
+                    IsStructured: true, OriginalMessageId: originalMessageId);
             }
         }
 
@@ -150,11 +167,16 @@ public static class DsnMessageParser
     }
 
     /// <summary>
-    /// Looks for the original outbound message attached as <c>message/rfc822</c>
-    /// (how Gmail and most providers include "what you sent" in a bounce) and
-    /// returns its <c>Message-Id</c>, if any — a far more precise way to match
-    /// a bounce back to one exact send than recipient address plus a time
-    /// window, when it's available.
+    /// Looks for the original outbound message's <c>Message-Id</c> — a far
+    /// more precise way to match a bounce back to one exact send than
+    /// recipient address plus a time window, when it's available. Two shapes,
+    /// both real: a full <c>message/rfc822</c> attachment (how a real MTA-to-
+    /// MTA bounce — Postfix, Exchange, most providers — includes "what you
+    /// sent"), or just a <c>text/rfc822-headers</c> part with the headers
+    /// alone and no body (Gmail's own shape specifically for a message it
+    /// blocked before it ever left Gmail's network, so there's nothing to
+    /// attach in full). Checked in that order since a full attachment is the
+    /// more reliable of the two when both are somehow present.
     /// </summary>
     public static string? TryFindOriginalMessageId(MimeMessage message)
     {
@@ -168,7 +190,9 @@ public static class DsnMessageParser
             return null;
         }
 
-        foreach (var part in bodyParts)
+        var partsList = bodyParts as IReadOnlyList<MimeEntity> ?? bodyParts.ToList();
+
+        foreach (var part in partsList)
         {
             if (part is not MessagePart embedded) continue;
 
@@ -183,7 +207,52 @@ public static class DsnMessageParser
             }
         }
 
+        foreach (var part in partsList)
+        {
+            if (part is not TextPart text) continue;
+            if (!text.ContentType.MimeType.Equals("text/rfc822-headers", StringComparison.OrdinalIgnoreCase)) continue;
+
+            var headerText = SafePartText(text);
+            if (headerText is null) continue;
+
+            var id = ExtractMessageIdFromHeaderText(headerText);
+            if (id is not null) return id;
+        }
+
         return null;
+    }
+
+    /// <summary>Pulls a <c>Message-ID:</c> header's value out of raw header text and strips its angle brackets, to match <see cref="MimeMessage.MessageId"/>'s own bare format.</summary>
+    private static string? ExtractMessageIdFromHeaderText(string headerText)
+    {
+        foreach (var line in headerText.Split('\n'))
+        {
+            var trimmed = line.Trim();
+            if (!trimmed.StartsWith("Message-ID:", StringComparison.OrdinalIgnoreCase)) continue;
+
+            var value = trimmed[(trimmed.IndexOf(':') + 1)..].Trim();
+            return CleanMessageId(value);
+        }
+
+        return null;
+    }
+
+    private static string? SafePartText(TextPart part)
+    {
+        try
+        {
+            return part.Text;
+        }
+        catch
+        {
+            return null;
+        }
+    }
+
+    private static string? CleanMessageId(string? raw)
+    {
+        if (string.IsNullOrWhiteSpace(raw)) return null;
+        return raw.Trim().Trim('<', '>').Trim();
     }
 
     private static string SafeText(MimeMessage message)
