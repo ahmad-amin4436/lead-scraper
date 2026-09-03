@@ -1,4 +1,5 @@
 using LeadMine.Domain.Common;
+using LeadMine.Domain.Enums;
 
 namespace LeadMine.Domain.Entities;
 
@@ -71,6 +72,15 @@ public enum EmailSendStatus
     Queued = 0,
     Sent = 1,
     Failed = 2,
+
+    /// <summary>
+    /// The send itself succeeded (SMTP accepted it), but a delivery-failure
+    /// notice was later matched back to this message by
+    /// <c>EmailBounceProcessorService</c>. Distinct from <see cref="Failed"/>,
+    /// which means the SMTP send attempt itself was rejected synchronously —
+    /// this is an asynchronous verdict that can arrive minutes to days later.
+    /// </summary>
+    Bounced = 3,
 }
 
 /// <summary>
@@ -119,7 +129,14 @@ public class EmailLog
 
     public string? Error { get; set; }
 
-    /// <summary>Message-ID assigned by the SMTP server, for tracing.</summary>
+    /// <summary>
+    /// The <c>Message-Id</c> header this message was sent with (assigned
+    /// before sending, not read back from the server) — how
+    /// <c>EmailBounceProcessorService</c> can match a later DSN to this exact
+    /// send when the bounce carries the original message as a
+    /// <c>message/rfc822</c> attachment, which is more precise than matching
+    /// on recipient address and a time window alone.
+    /// </summary>
     public string? MessageId { get; set; }
 
     public DateTimeOffset CreatedAt { get; set; } = DateTimeOffset.UtcNow;
@@ -127,4 +144,22 @@ public class EmailLog
     public DateTimeOffset? SentAt { get; set; }
 
     public long? DurationMs { get; set; }
+
+    // --- Post-send bounce processing -----------------------------------------
+    // Set only when Status transitions to Bounced. See EmailBounceProcessorService
+    // and Business's own EmailBounceType/EmailBounceStatus for the lead-level
+    // rollup this feeds into.
+
+    public EmailBounceType? BounceType { get; set; }
+
+    /// <summary>The DSN's own reason line — <c>Diagnostic-Code</c> if present, else <c>Status</c>, else a heuristic subject.</summary>
+    public string? BounceReason { get; set; }
+
+    /// <summary>The raw SMTP reply code from the DSN (e.g. 550), when one could be parsed out of it.</summary>
+    public int? BounceSmtpCode { get; set; }
+
+    /// <summary>The RFC 3463 extended status code (e.g. "5.1.1"), when the DSN carried one.</summary>
+    public string? BounceDsnCode { get; set; }
+
+    public DateTimeOffset? BounceDetectedAt { get; set; }
 }

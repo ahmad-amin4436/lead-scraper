@@ -280,6 +280,7 @@ public static class DependencyInjection
         services.AddHostedService<EmailValidationWorkerService>();
         services.AddHostedService<EmailSmtpProbeWorkerService>();
         services.AddHostedService<EmailBounceCheckWorkerService>();
+        services.AddHostedService<EmailBounceProcessorService>();
 
         // Owns the one shared Chromium process for every Playwright-backed
         // provider. Registered as its own interface-free singleton (not

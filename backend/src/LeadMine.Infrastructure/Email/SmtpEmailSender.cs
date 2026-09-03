@@ -4,6 +4,7 @@ using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 using MimeKit;
 using MimeKit.Text;
+using MimeKit.Utils;
 
 namespace LeadMine.Infrastructure.Email;
 
@@ -122,6 +123,13 @@ public sealed class SmtpEmailSender(
     private MimeMessage BuildMessage(OutboundMessage message)
     {
         var mime = new MimeMessage();
+
+        // Assigned explicitly rather than left to whatever the outbound
+        // server does with a missing header — EmailBounceProcessorService
+        // matches a later DSN back to this exact send by looking for this
+        // same id inside the bounce's attached original-message copy, which
+        // only works if one was actually set going out.
+        mime.MessageId = MimeUtils.GenerateMessageId();
 
         mime.From.Add(new MailboxAddress(_options.FromName, _options.EffectiveFrom));
         mime.To.Add(MailboxAddress.Parse(message.ToEmail));

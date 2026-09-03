@@ -3,6 +3,7 @@ using LeadMine.Application.Common;
 using LeadMine.Application.DTOs;
 using LeadMine.Application.Interfaces;
 using LeadMine.Domain.Entities;
+using LeadMine.Domain.Enums;
 using LeadMine.Infrastructure.Email;
 using LeadMine.Infrastructure.Persistence;
 using Microsoft.EntityFrameworkCore;
@@ -97,6 +98,20 @@ public sealed class EmailService(
             {
                 result.Skipped++;
                 result.Outcomes.Add(new SendEmailOutcome(lead.Id, string.Empty, "skipped", "No email address"));
+                continue;
+            }
+
+            // A confirmed hard bounce (EmailBounceProcessorService) means the
+            // mailbox doesn't exist — sending to it again wastes a send and
+            // damages sender reputation for no possible upside. DryRun is
+            // exempt: it never talks to a real mail server either way, and
+            // is exactly how someone would re-check a preset against a
+            // suppressed address on purpose.
+            if (lead.EmailBounceStatus == EmailBounceStatus.Suppressed && !request.DryRun)
+            {
+                result.Skipped++;
+                result.Outcomes.Add(new SendEmailOutcome(
+                    lead.Id, lead.Email, "skipped", "Suppressed — a previous send to this address hard-bounced"));
                 continue;
             }
 

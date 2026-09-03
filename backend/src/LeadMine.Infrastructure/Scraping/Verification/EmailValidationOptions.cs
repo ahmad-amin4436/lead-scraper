@@ -79,6 +79,36 @@ public sealed class EmailValidationOptions
     [Range(1, 500)]
     public int SmtpProbeMaxPerHourPerDomain { get; set; } = 15;
 
+    /// <summary>
+    /// How many times a 4xx (temporary failure) reply is given a fresh
+    /// attempt on a later tick before the address is left at whatever the
+    /// DNS-based result already said. Counted in <c>Business.EmailRetryCount</c>.
+    /// Bounded so a server that is permanently, rather than transiently, slow
+    /// or overloaded doesn't get probed forever.
+    /// </summary>
+    [Range(0, 20)]
+    public int SmtpProbeMaxRetries { get; set; } = 2;
+
+    // --- Bounce processing: watch the real outbound mailbox for real bounces -
+    // Read-only against IMAP — never sends anything, so it carries none of
+    // EnableBounceCheck's abuse-detection risk below. Off by default anyway,
+    // consistent with every other mailbox-touching feature in this file, and
+    // because it's meaningless without BounceCheckUsername/AppPassword (reused
+    // here rather than duplicated — see those fields' own remarks) configured.
+
+    /// <summary>Enables scanning the outbound mailbox for delivery-failure notices against real campaign sends. Off by default.</summary>
+    public bool EnableBounceProcessing { get; set; } = false;
+
+    [Range(30, 3600)]
+    public int BounceProcessorPollSeconds { get; set; } = 300;
+
+    /// <summary>
+    /// On first run (no watermark recorded yet), how far back to look rather
+    /// than scanning the mailbox's entire history.
+    /// </summary>
+    [Range(1, 30)]
+    public int BounceProcessorLookbackDays { get; set; } = 7;
+
     // --- Bounce check: send a real probe email, watch a real inbox ----------
     // Opt-in, and capped well under Gmail's consumer sending limit (~500/day)
     // with margin — this pass is functionally a small outbound campaign, and
@@ -120,14 +150,21 @@ public sealed class EmailValidationOptions
     [Range(1, 65535)]
     public int BounceCheckSmtpPort { get; set; } = 587;
 
-    /// <summary>IMAP host the bounce scanner reads from — normally the same mailbox the probe was sent from.</summary>
+    /// <summary>
+    /// IMAP host the bounce scanner reads from — normally the same mailbox the
+    /// probe was sent from. Also what <see cref="EnableBounceProcessing"/>
+    /// connects to; reused rather than duplicated since in practice this is
+    /// the same Gmail account <c>Smtp</c> already sends real campaigns from.
+    /// </summary>
     public string BounceCheckImapHost { get; set; } = "imap.gmail.com";
 
     [Range(1, 65535)]
     public int BounceCheckImapPort { get; set; } = 993;
 
     /// <summary>
-    /// The mailbox address probes are sent from and bounces are read back from.
+    /// The mailbox address probes are sent from and bounces are read back
+    /// from — and, when <see cref="EnableBounceProcessing"/> is on, the same
+    /// mailbox real campaign bounces are read back from too.
     /// </summary>
     public string BounceCheckUsername { get; set; } = string.Empty;
 

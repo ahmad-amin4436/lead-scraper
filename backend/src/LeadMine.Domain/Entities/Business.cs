@@ -185,4 +185,33 @@ public class Business : AuditableEntity
     /// the per-domain-per-hour budget for) ones it already has an answer for.
     /// </summary>
     public DateTimeOffset? EmailSmtpProbedAt { get; set; }
+
+    /// <summary>The raw SMTP reply code from the most recent probe or bounce (e.g. 550, 450, 250).</summary>
+    public int? EmailSmtpCode { get; set; }
+
+    /// <summary>The RFC 3463 extended status code from the most recent probe or bounce (e.g. "5.1.1"), when one was present.</summary>
+    public string? EmailDsnCode { get; set; }
+
+    // --- Post-send bounce processing ------------------------------------------
+    // Filled in by EmailBounceProcessorService from a real delivery-failure
+    // notice matched back to an actual campaign send — distinct from the
+    // pre-send SMTP probe above, which never sends anything. See
+    // EmailBounceStatus/EmailBounceType's own doc comments for what each value
+    // means and drives.
+
+    public EmailBounceStatus EmailBounceStatus { get; set; } = EmailBounceStatus.Clean;
+
+    public EmailBounceType EmailBounceType { get; set; } = EmailBounceType.None;
+
+    public string? EmailBounceReason { get; set; }
+
+    public DateTimeOffset? EmailLastBounceAt { get; set; }
+
+    /// <summary>
+    /// How many times this address has been given the benefit of the doubt on
+    /// a non-definitive result — a 4xx during an SMTP probe, or a soft bounce
+    /// on a real send. Capped (see <c>EmailValidationOptions.SmtpProbeMaxRetries</c>)
+    /// so a permanently-4xx-ing server doesn't get retried forever.
+    /// </summary>
+    public int EmailRetryCount { get; set; }
 }

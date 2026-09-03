@@ -8,13 +8,17 @@ namespace LeadMine.Infrastructure.Scraping.Verification;
 /// <summary>
 /// The free-form part of a validation result — everything that doesn't need
 /// its own indexed column on <c>Business</c>. Serialized to
-/// <c>Business.EmailValidationDetailsJson</c>.
+/// <c>Business.EmailValidationDetailsJson</c>. Every field here is what makes
+/// a validation decision explainable after the fact, not just a bare status.
 /// </summary>
 public sealed record EmailValidationDetails(
     string NormalizedEmail,
     string Reason,
     IReadOnlyList<string> MxHosts,
     string? SmtpProbeResult,
+    SmtpResponseClass? SmtpClass,
+    int? SmtpCode,
+    string? DsnCode,
     DateTimeOffset EvaluatedAt);
 
 /// <param name="IsCatchAll">Null when the SMTP probe never ran; see <see cref="EmailValidationOptions.EnableSmtpProbe"/>.</param>
@@ -25,6 +29,12 @@ public sealed record EmailValidationDetails(
 /// from <paramref name="IsCatchAll"/> being null, which can also mean "ran,
 /// but the catch-all check itself came back inconclusive".
 /// </param>
+/// <param name="NeedsRetry">
+/// True when the probe got a temporary failure (4xx after its own bounded
+/// retry) — the caller should count this against <c>Business.EmailRetryCount</c>
+/// and leave the address eligible to be probed again on a later sweep,
+/// rather than treating <paramref name="ProbeAttempted"/> as "done".
+/// </param>
 public sealed record EmailValidationOutcome(
     EmailStatus Status,
     int Confidence,
@@ -32,6 +42,7 @@ public sealed record EmailValidationOutcome(
     bool IsRoleAccount,
     bool? IsCatchAll,
     bool ProbeAttempted,
+    bool NeedsRetry,
     EmailValidationDetails Details)
 {
     public string DetailsJson => JsonSerializer.Serialize(Details);
@@ -76,6 +87,10 @@ public sealed class EmailValidationPipeline(
         var confidence = BaseConfidence(status, baseResult.IsDisposable, baseResult.IsRoleAccount);
         string? smtpOutcome = null;
         bool? isCatchAll = null;
+        SmtpResponseClass? smtpClass = null;
+        int? smtpCode = null;
+        string? dsnCode = null;
+        var needsRetry = false;
 
         var options = optionsMonitor.CurrentValue;
         var smtpProbeEnabled = forceSmtpProbe ?? options.EnableSmtpProbe;
@@ -108,10 +123,18 @@ public sealed class EmailValidationPipeline(
             try
             {
                 isCatchAll = await smtpProbe.IsCatchAllAsync(mxHosts, ExtractDomain(normalized), options.SmtpProbeTimeoutMs, ct);
-                var probeResult = await smtpProbe.ProbeAsync(mxHosts, normalized, options.SmtpProbeTimeoutMs, ct);
-                smtpOutcome = probeResult.ToString();
+                var probe = await smtpProbe.ProbeAsync(mxHosts, normalized, options.SmtpProbeTimeoutMs, ct);
+                smtpOutcome = probe.Result.ToString();
+                smtpClass = probe.Class;
+                smtpCode = probe.SmtpCode == 0 ? null : probe.SmtpCode;
+                dsnCode = probe.DsnCode;
+                needsRetry = probe.Class == SmtpResponseClass.TempFailure;
 
-                (status, confidence) = ApplyProbeResult(status, confidence, probeResult, isCatchAll);
+                logger.LogDebug(
+                    "SMTP probe for {Domain}: {Result} ({Class}, code={Code}, dsn={Dsn}, catchAll={CatchAll})",
+                    ExtractDomain(normalized), probe.Result, probe.Class, probe.SmtpCode, probe.DsnCode, isCatchAll);
+
+                (status, confidence) = ApplyProbeResult(status, confidence, probe, isCatchAll);
             }
             catch (OperationCanceledException) when (ct.IsCancellationRequested)
             {
@@ -128,10 +151,13 @@ public sealed class EmailValidationPipeline(
             baseResult.Reason,
             mxHosts,
             smtpOutcome,
+            smtpClass,
+            smtpCode,
+            dsnCode,
             DateTimeOffset.UtcNow);
 
         return new EmailValidationOutcome(
-            status, confidence, baseResult.IsDisposable, baseResult.IsRoleAccount, isCatchAll, probeAttempted, details);
+            status, confidence, baseResult.IsDisposable, baseResult.IsRoleAccount, isCatchAll, probeAttempted, needsRetry, details);
     }
 
     private static int BaseConfidence(EmailStatus status, bool isDisposable, bool isRoleAccount) => status switch
@@ -146,13 +172,16 @@ public sealed class EmailValidationPipeline(
     };
 
     private static (EmailStatus Status, int Confidence) ApplyProbeResult(
-        EmailStatus status, int confidence, SmtpProbeResult probe, bool? isCatchAll)
+        EmailStatus status, int confidence, SmtpProbeOutcome probe, bool? isCatchAll)
     {
         // A live rejection from the recipient's own mail server outranks every
-        // DNS-only signal, regardless of what came before it.
-        if (probe == SmtpProbeResult.Rejected) return (EmailStatus.Invalid, 3);
+        // DNS-only signal, regardless of what came before it — but only a hard
+        // failure. Everything else below is deliberately conservative: a 4xx
+        // or a 5.7.x is a real reply, just not one that proves the mailbox
+        // doesn't exist (see SmtpResponseClass's own remarks).
+        if (probe.Class == SmtpResponseClass.HardFailure) return (EmailStatus.Invalid, 3);
 
-        if (probe == SmtpProbeResult.Accepted)
+        if (probe.Result == SmtpProbeResult.Accepted)
         {
             // A catch-all domain accepts every address, so "accepted" here
             // proves nothing about this specific mailbox — keep the DNS-based
@@ -162,7 +191,11 @@ public sealed class EmailValidationPipeline(
             return (EmailStatus.Valid, 97);
         }
 
-        // Inconclusive: the probe didn't help either way.
+        // Temp failure / policy rejection / no answer at all: the probe
+        // didn't produce a trustworthy verdict either way, so the DNS-based
+        // result stands. A policy rejection specifically must never be read
+        // as "doesn't exist" — it's a decision about this send, not the
+        // address — so status is left untouched here on purpose.
         return (status, confidence);
     }
 

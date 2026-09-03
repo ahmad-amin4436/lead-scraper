@@ -303,24 +303,27 @@ public sealed class EmailBounceCheckWorkerService(
                 continue;
             }
 
-            var failedRecipient = TryExtractStructuredBounce(message, out var reason);
+            var parsed = DsnMessageParser.TryParseStructured(message);
 
             // No structured DSN recipient — for a message that still looks
             // like a bounce, fall back to searching its text for a pending
             // address, since an unstructured bounce rarely repeats the
             // address in a header we can parse reliably.
-            if (failedRecipient is null && LooksLikeBounce(message, out var heuristicReason))
+            if (parsed is null && DsnMessageParser.LooksLikeBounce(message, out var heuristicReason))
             {
-                failedRecipient = FindPendingAddressInText(message, byEmail.Keys);
-                reason ??= heuristicReason;
+                var address = DsnMessageParser.FindAddressInText(message, byEmail.Keys);
+                if (address is not null)
+                {
+                    parsed = DsnMessageParser.BuildHeuristicBounce(address, heuristicReason, message);
+                }
             }
 
-            if (failedRecipient is null || !byEmail.TryGetValue(failedRecipient, out var check)) continue;
+            if (parsed?.FinalRecipient is null || !byEmail.TryGetValue(parsed.FinalRecipient, out var check)) continue;
 
             check.Status = EmailBounceCheckStatus.Bounced;
             check.ResolvedAt = DateTimeOffset.UtcNow;
-            check.BounceReason = reason;
-            resolvedBusinessIds.Add((check.BusinessId, reason ?? "Delivery failure notice received"));
+            check.BounceReason = parsed.Reason;
+            resolvedBusinessIds.Add((check.BusinessId, parsed.Reason ?? "Delivery failure notice received"));
         }
 
         try
@@ -349,95 +352,4 @@ public sealed class EmailBounceCheckWorkerService(
         await db.SaveChangesAsync(ct);
     }
 
-    /// <summary>
-    /// The RFC 3464 structured format — what Gmail and most major providers
-    /// send. Reliable when present: the recipient comes straight from a
-    /// dedicated field, not a text guess.
-    /// </summary>
-    private static string? TryExtractStructuredBounce(MimeMessage message, out string? reason)
-    {
-        reason = null;
-
-        foreach (var part in message.BodyParts)
-        {
-            if (part is not MessageDeliveryStatus status) continue;
-
-            // StatusGroups[0] is the per-message fields; recipient groups follow.
-            foreach (var group in status.StatusGroups.Skip(1))
-            {
-                var action = group["Action"];
-                if (action is null || !action.Contains("fail", StringComparison.OrdinalIgnoreCase)) continue;
-
-                var finalRecipient = group["Final-Recipient"] ?? group["Original-Recipient"];
-                if (finalRecipient is null) continue;
-
-                var cleaned = CleanAddress(finalRecipient);
-                if (cleaned is null) continue;
-
-                reason = group["Diagnostic-Code"] ?? group["Status"];
-                return cleaned;
-            }
-        }
-
-        return null;
-    }
-
-    /// <summary>From/subject heuristics for servers that don't send a structured DSN.</summary>
-    private static bool LooksLikeBounce(MimeMessage message, out string? reason)
-    {
-        var from = message.From.Mailboxes.FirstOrDefault()?.Address ?? string.Empty;
-        var subject = message.Subject ?? string.Empty;
-        reason = subject;
-
-        return
-            from.Contains("mailer-daemon", StringComparison.OrdinalIgnoreCase) ||
-            from.Contains("postmaster", StringComparison.OrdinalIgnoreCase) ||
-            subject.Contains("undeliver", StringComparison.OrdinalIgnoreCase) ||
-            subject.Contains("delivery status notification", StringComparison.OrdinalIgnoreCase) ||
-            subject.Contains("failure notice", StringComparison.OrdinalIgnoreCase) ||
-            subject.Contains("returned to sender", StringComparison.OrdinalIgnoreCase);
-    }
-
-    /// <summary>
-    /// Scans a bounce-looking message's plain-text body for any address still
-    /// awaiting a result. Last resort, used only when the message carries no
-    /// structured recipient field at all.
-    /// </summary>
-    private static string? FindPendingAddressInText(MimeMessage message, IEnumerable<string> pendingAddresses)
-    {
-        string text;
-        try
-        {
-            text = message.TextBody ?? message.HtmlBody ?? string.Empty;
-        }
-        catch
-        {
-            return null;
-        }
-
-        if (text.Length == 0) return null;
-
-        foreach (var address in pendingAddresses)
-        {
-            if (text.Contains(address, StringComparison.OrdinalIgnoreCase)) return address;
-        }
-
-        return null;
-    }
-
-    private static string? CleanAddress(string raw)
-    {
-        var value = raw.Trim();
-        var prefixIndex = value.IndexOf(';');
-        if (prefixIndex >= 0) value = value[(prefixIndex + 1)..].Trim();
-
-        try
-        {
-            return MailboxAddress.Parse(value).Address;
-        }
-        catch
-        {
-            return value.Length > 0 ? value : null;
-        }
-    }
 }

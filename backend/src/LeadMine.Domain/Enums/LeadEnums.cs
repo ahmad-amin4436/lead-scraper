@@ -142,3 +142,89 @@ public enum EmailBounceCheckStatus
     /// <summary>The probe send itself failed (SMTP error) — inconclusive, not a bounce.</summary>
     SendFailed = 3,
 }
+
+/// <summary>
+/// What an SMTP response (pre-send RCPT TO probe, or a real send's own
+/// rejection) actually proves — shared by <c>SmtpProbe</c> (pre-send) and
+/// <c>EmailBounceProcessorService</c> (post-send DSN parsing), since both read
+/// the same RFC 5321/3463 codes and must draw the same conclusions from them.
+/// <para>
+/// The two facts this whole pipeline is built around: a 2xx accept is not
+/// proof a mailbox exists (catch-all domains, and providers that accept
+/// everything and bounce later), and a 5xx reject is not automatically proof
+/// it doesn't (5.7.x is a policy/security decision, not a statement about the
+/// address).
+/// </para>
+/// </summary>
+public enum SmtpResponseClass
+{
+    /// <summary>2xx. Accepted by the receiving server — not proof the mailbox exists.</summary>
+    Accepted = 0,
+
+    /// <summary>
+    /// 550/551/553 with no extended code, or an extended code meaning "no such
+    /// mailbox" (5.1.1 bad destination mailbox, 5.1.2 bad destination system,
+    /// 5.1.3 bad mailbox syntax, 5.1.6 mailbox moved, 5.1.10 recipient
+    /// rejected). Excludes 5.1.5 ("mailbox valid") and 5.1.0/5.1.4, which are
+    /// too ambiguous to call a hard failure.
+    /// </summary>
+    HardFailure = 1,
+
+    /// <summary>4xx (421, 450, 451, 452, or any other 4xx) — transient, worth retrying later.</summary>
+    TempFailure = 2,
+
+    /// <summary>
+    /// 5.7.x — a policy, security or authentication decision (greylisting,
+    /// SPF/DKIM/DMARC, spam filtering), not a statement that the address
+    /// doesn't exist. Must never be auto-classified as invalid.
+    /// </summary>
+    PolicyRejection = 3,
+
+    /// <summary>Anything else: unparseable, a 5xx not covered above, connection-level failure, or no response at all.</summary>
+    Inconclusive = 4,
+}
+
+/// <summary>
+/// Classification of an actual delivery-failure notice (DSN/NDR) matched back
+/// to a real send — <c>EmailBounceProcessorService</c>'s output. Distinct from
+/// <see cref="SmtpResponseClass"/> (which is the raw code) in that it's the
+/// business-facing label callers act on: see <c>Business.EmailBounceStatus</c>
+/// for the resulting suppress/retry/review decision.
+/// </summary>
+public enum EmailBounceType
+{
+    /// <summary>No bounce has ever been observed for this address.</summary>
+    None = 0,
+
+    /// <summary>Permanent — the mailbox or domain doesn't exist. Stop sending.</summary>
+    HardBounce = 1,
+
+    /// <summary>Transient — mailbox full, greylisted, server temporarily down. Worth a later retry.</summary>
+    SoftBounce = 2,
+
+    /// <summary>A 5.7.x policy/security rejection — not evidence the address doesn't exist.</summary>
+    PolicyRejection = 3,
+
+    /// <summary>A bounce-looking message arrived but couldn't be classified from its code.</summary>
+    Unknown = 4,
+}
+
+/// <summary>
+/// The action-oriented state <c>Business</c> carries forward from the last
+/// bounce classification — what a caller should actually do about it, not
+/// just what happened.
+/// </summary>
+public enum EmailBounceStatus
+{
+    /// <summary>No bounce on record. Safe to send.</summary>
+    Clean = 0,
+
+    /// <summary>A hard bounce was confirmed — sends to this address are blocked (see <c>EmailService.SendCoreAsync</c>).</summary>
+    Suppressed = 1,
+
+    /// <summary>A soft bounce was seen — eligible for another attempt after backoff, up to the configured retry cap.</summary>
+    RetryScheduled = 2,
+
+    /// <summary>A policy rejection was seen — needs a human look, not an automatic verdict either way.</summary>
+    UnderReview = 3,
+}

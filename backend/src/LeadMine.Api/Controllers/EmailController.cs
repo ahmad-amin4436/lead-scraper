@@ -168,6 +168,9 @@ public sealed class EmailController(
             outcome.IsRoleAccount,
             outcome.IsCatchAll,
             outcome.Details.SmtpProbeResult,
+            outcome.Details.SmtpClass?.ToString(),
+            outcome.Details.SmtpCode,
+            outcome.Details.DsnCode,
             outcome.Details.Reason));
     }
 }
@@ -181,6 +184,9 @@ public sealed record VerifyEmailRequest(string Email);
 /// <param name="IsRoleAccount">A shared/team mailbox (info@, sales@, ...) rather than a named person.</param>
 /// <param name="IsCatchAll">Null only if the SMTP probe itself could not run (e.g. no MX, or the recipient's mail port is unreachable from this host).</param>
 /// <param name="SmtpProbeResult">"Accepted" | "Rejected" | "Inconclusive".</param>
+/// <param name="SmtpClass">"Accepted" | "HardFailure" | "TempFailure" | "PolicyRejection" | "Inconclusive" — see SmtpResponseClass. Null if the probe never ran.</param>
+/// <param name="SmtpCode">The raw RCPT TO reply code (e.g. 550), when the probe got one.</param>
+/// <param name="DsnCode">The RFC 3463 extended status code (e.g. "5.1.1"), when the reply carried one.</param>
 /// <param name="Reason">Human-readable explanation of the DNS/MX-level verdict.</param>
 public sealed record VerifyEmailResponse(
     string Email,
@@ -190,6 +196,9 @@ public sealed record VerifyEmailResponse(
     bool IsRoleAccount,
     bool? IsCatchAll,
     string? SmtpProbeResult,
+    string? SmtpClass,
+    int? SmtpCode,
+    string? DsnCode,
     string Reason);
 
 /// <summary>Admin-managed presets and signatures.</summary>

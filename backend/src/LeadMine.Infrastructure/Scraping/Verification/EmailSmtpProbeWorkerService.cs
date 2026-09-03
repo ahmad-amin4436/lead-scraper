@@ -103,6 +103,11 @@ public sealed class EmailSmtpProbeWorkerService(
 
         // Valid leads first — those are the ones a real send batch would
         // actually pick up (the compose page defaults to filtering on Valid).
+        // A lead stuck on a temp failure (EmailSmtpProbedAt left unset by the
+        // persistence loop below, specifically so this keeps finding it) is
+        // eligible right alongside never-probed ones, up to its retry cap —
+        // once that's hit the loop sets EmailSmtpProbedAt anyway, so it drops
+        // out of this query on its own without needing a second filter here.
         var batch = await db.Businesses
             .Where(b => b.Email != ""
                 && b.EmailValidatedAt != null
@@ -152,11 +157,37 @@ public sealed class EmailSmtpProbeWorkerService(
             business.EmailIsRoleAccount = outcome.IsRoleAccount;
             business.EmailIsCatchAll = outcome.IsCatchAll;
             business.EmailValidationDetailsJson = outcome.DetailsJson;
+            business.EmailSmtpCode = outcome.Details.SmtpCode;
+            business.EmailDsnCode = outcome.Details.DsnCode;
 
-            // Only mark it probed if the probe actually ran — a lead skipped
-            // this tick because its domain hit the hourly cap stays eligible
-            // to be picked up again on a later tick.
-            if (outcome.ProbeAttempted) business.EmailSmtpProbedAt = DateTimeOffset.UtcNow;
+            if (!outcome.ProbeAttempted)
+            {
+                // Skipped this tick (domain hit the hourly cap) — stays
+                // eligible to be picked up again on a later tick.
+                continue;
+            }
+
+            if (outcome.NeedsRetry)
+            {
+                business.EmailRetryCount++;
+
+                if (business.EmailRetryCount > options.SmtpProbeMaxRetries)
+                {
+                    // Retry budget exhausted — stop trying and record the
+                    // last thing the server actually said, rather than
+                    // silently pretending nothing happened.
+                    business.EmailSmtpProbedAt = DateTimeOffset.UtcNow;
+                    logger.LogDebug(
+                        "SMTP probe for {Email} stayed at temp failure ({Code}) after {Retries} retries; giving up",
+                        business.Email, outcome.Details.SmtpCode, business.EmailRetryCount);
+                }
+                // Else: leave EmailSmtpProbedAt unset so the query above finds
+                // this lead again on a later tick.
+            }
+            else
+            {
+                business.EmailSmtpProbedAt = DateTimeOffset.UtcNow;
+            }
         }
 
         await db.SaveChangesAsync(ct);

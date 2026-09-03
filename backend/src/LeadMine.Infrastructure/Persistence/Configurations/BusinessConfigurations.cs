@@ -41,6 +41,11 @@ public class BusinessConfiguration : IEntityTypeConfiguration<Business>
         builder.Property(b => b.Status).HasConversion<int>();
         builder.Property(b => b.EmailStatus).HasConversion<int>();
         builder.Property(b => b.WhatsAppStatus).HasConversion<int>();
+        builder.Property(b => b.EmailBounceStatus).HasConversion<int>();
+        builder.Property(b => b.EmailBounceType).HasConversion<int>();
+
+        builder.Property(b => b.EmailDsnCode).HasMaxLength(32);
+        builder.Property(b => b.EmailBounceReason).HasMaxLength(2000);
 
         // EmailValidationDetailsJson is free-form diagnostic detail, unbounded on
         // purpose — see the property's doc comment on Business.
@@ -72,6 +77,11 @@ public class BusinessConfiguration : IEntityTypeConfiguration<Business>
         // SMTP-probed". Filtered — most rows never get probed at all, since
         // it's off by default.
         builder.HasIndex(b => b.EmailSmtpProbedAt).HasFilter("[EmailSmtpProbedAt] IS NULL");
+
+        // EmailService.SendCoreAsync's suppression check, and the compose
+        // page's own "hide already emailed" filter combine most usefully
+        // with this — filtered since Clean (the default) is nearly every row.
+        builder.HasIndex(b => b.EmailBounceStatus).HasFilter("[EmailBounceStatus] <> 0");
 
         // Duplicate detection: filtered so many NULLs don't bloat the index.
         builder.HasIndex(b => b.DedupeWebsiteKey).HasFilter("[DedupeWebsiteKey] IS NOT NULL");
